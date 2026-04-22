@@ -1,0 +1,9 @@
+export { default as StatCard } from './StatCard.vue';
+export { default as PageHeader } from './PageHeader.vue';
+export { default as Modal } from './Modal.vue';
+export { default as DataTable } from './DataTable.vue';
+export { default as Badge } from './Badge.vue';
+export { default as EmptyState } from './EmptyState.vue';
+export { default as ProgressBar } from './ProgressBar.vue';
+export { default as SearchInput } from './SearchInput.vue';
+export { default as Tabs } from './Tabs.vue';

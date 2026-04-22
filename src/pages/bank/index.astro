@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import BankPage from '../../components/bank/BankPage.vue';
+---
+<MainLayout title="Bank Accounts">
+  <BankPage client:only="vue" />
+</MainLayout>

@@ -1,0 +1,55 @@
+import type { Loan } from '../types';
+
+export const mockLoans: Loan[] = [
+  // NOTE: loan_001 (Home Loan from Sonali Bank) was removed and migrated to
+  // the Mortgage module (mort_003) since home loans belong in Mortgage, not Loan.
+  // The Loan module now handles: personal, auto, education, business loans only.
+
+  {
+    id: 'loan_002',
+    name: 'Personal Loan',
+    type: 'personal',
+    lenderName: 'City Bank',
+    principalAmount: 300000,
+    currentBalance: 250000,
+    interestRate: 12,
+    termMonths: 36,
+    emiAmount: 9964,
+    startDate: '2025-11-01T00:00:00.000Z',
+    nextPaymentDate: '2026-05-05T00:00:00.000Z',
+    nextPaymentAmount: 9964,
+    paidAmount: 49820,
+    paidInstallments: 5,
+    totalInstallments: 36,
+    status: 'active',
+    payments: [],
+    bankAccountId: 'ba_003',
+    currency: 'BDT',
+    createdAt: '2025-11-01T00:00:00.000Z',
+    updatedAt: '2026-04-01T00:00:00.000Z',
+  },
+  {
+    id: 'loan_003',
+    name: 'Car Loan — Toyota Corolla X',
+    type: 'auto',
+    lenderName: 'Eastern Bank PLC (EBL)',
+    principalAmount: 1500000,
+    currentBalance: 1125000,
+    interestRate: 10.5,
+    termMonths: 48,
+    emiAmount: 45000,
+    startDate: '2024-04-01T00:00:00.000Z',
+    nextPaymentDate: '2026-05-10T00:00:00.000Z',
+    nextPaymentAmount: 45000,
+    paidAmount: 1125000,
+    paidInstallments: 25,
+    totalInstallments: 48,
+    status: 'active',
+    payments: [],
+    bankAccountId: 'ba_002',
+    currency: 'BDT',
+    notes: 'Toyota Corolla X 2024. 23 installments remaining. Maturity: March 2028.',
+    createdAt: '2024-04-01T00:00:00.000Z',
+    updatedAt: '2026-04-10T00:00:00.000Z',
+  },
+];

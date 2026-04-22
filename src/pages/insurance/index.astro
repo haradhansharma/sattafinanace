@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import InsurancePage from '../../components/insurance/InsurancePage.vue';
+
+---
+
+<MainLayout title="Insurance">
+  <InsurancePage client:only="vue" />
+</MainLayout>

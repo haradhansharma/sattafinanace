@@ -1,0 +1,70 @@
+---
+import '../styles/global.css';
+import { ClientRouter } from 'astro:transitions';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} — FinLife</title>
+    <ClientRouter />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <!-- Background Gradient Pattern -->
+    <div class="fixed inset-0 -z-10">
+      <div class="absolute inset-0 bg-gradient-to-br from-surface-100 via-white to-primary-50 dark:from-surface-950 dark:via-surface-900 dark:to-surface-800"></div>
+      <div class="absolute inset-0 opacity-[0.03]" style="background-image: radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0); background-size: 32px 32px;"></div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex items-center justify-center p-4 sm:p-6">
+      <div class="w-full max-w-md animate-fade-in">
+        <!-- Branding -->
+        <div class="text-center mb-8">
+          <a href="/" class="inline-flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center shadow-lg shadow-primary-600/25">
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <span class="text-2xl font-bold text-surface-900 dark:text-white">FinLife</span>
+          </a>
+          <p class="text-surface-500 dark:text-surface-400 mt-2 text-sm">Personal finance, simplified.</p>
+        </div>
+
+        <!-- Card -->
+        <div class="card p-6 sm:p-8">
+          <slot />
+        </div>
+
+        <!-- Footer -->
+        <p class="text-center text-xs text-surface-400 dark:text-surface-500 mt-6">
+          &copy; {new Date().getFullYear()} FinLife. All rights reserved.
+        </p>
+      </div>
+    </div>
+
+    <!-- Dark Mode Init -->
+    <script is:inline>
+      (function() {
+        const stored = localStorage.getItem('finlife-dark');
+        if (stored === 'true' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+  </body>
+</html>

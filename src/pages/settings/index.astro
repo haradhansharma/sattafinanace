@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import SettingsPage from '../../components/settings/SettingsPage.vue';
+---
+<MainLayout title="Settings">
+  <SettingsPage client:only="vue" />
+</MainLayout>

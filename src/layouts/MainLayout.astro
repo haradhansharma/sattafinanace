@@ -1,0 +1,347 @@
+---
+import '../styles/global.css';
+import { ClientRouter } from 'astro:transitions';
+import AuthGuard from '../components/auth/AuthGuard.vue';
+import UserMenu from '../components/auth/UserMenu.vue';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} — FinLife</title>
+    <ClientRouter />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body class="min-h-screen">
+    <!-- Mobile Overlay -->
+    <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="toggleSidebar()" transition:persist></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="fixed top-0 left-0 z-40 h-full bg-surface-900 border-r border-surface-800 flex flex-col transition-all duration-300 w-64 -translate-x-full lg:translate-x-0" data-collapsed="false" transition:persist>
+      <!-- Logo / Brand -->
+      <div class="flex items-center h-16 px-4 shrink-0">
+        <a href="/dashboard" class="flex items-center gap-3 min-w-0">
+          <div class="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <span class="sidebar-label text-white font-bold text-lg truncate">FinLife</span>
+        </a>
+        <!-- Mobile close button -->
+        <button onclick="toggleSidebar()" class="ml-auto lg:hidden text-surface-400 hover:text-white p-1 rounded">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+        <!-- Dashboard -->
+        <a href="/dashboard" data-page="dashboard" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Dashboard</span>
+        </a>
+
+        <!-- Income -->
+        <a href="/income" data-page="income" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Income</span>
+        </a>
+
+        <!-- Expenditure -->
+        <a href="/expense" data-page="expense" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Expenditure</span>
+        </a>
+
+        <!-- Bank Accounts -->
+        <a href="/bank" data-page="bank" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M3 7v1a3 3 0 006 0V7"/><path d="M9 7v1a3 3 0 006 0V7"/><path d="M15 7v1a3 3 0 006 0V7"/><path d="M3 7h18l-1.5-4.5a1 1 0 00-.95-.7H5.45a1 1 0 00-.95.7L3 7z"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Bank Accounts</span>
+        </a>
+
+        <!-- Cards -->
+        <a href="/cards" data-page="cards" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Cards</span>
+        </a>
+
+        <!-- Loans -->
+        <a href="/loans" data-page="loans" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01"/><path d="M18 12h.01"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Loans</span>
+        </a>
+
+        <!-- Mortgage -->
+        <a href="/mortgage" data-page="mortgage" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Mortgage</span>
+        </a>
+
+        <!-- Lending -->
+        <a href="/lending" data-page="lending" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Lending</span>
+        </a>
+
+        <!-- Budget -->
+        <a href="/budget" data-page="budget" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Budget</span>
+        </a>
+
+        <!-- Invoices -->
+        <a href="/invoices" data-page="invoices" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Invoices</span>
+        </a>
+
+        <!-- Investments -->
+        <a href="/investments" data-page="investments" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21H5a2 2 0 01-2-2V5a2 2 0 012-2h2m4 0v2m0-4h2a2 2 0 012 2v14a2 2 0 01-2 2h-6"/><circle cx="7" cy="15" r="1"/><circle cx="11" cy="19" r="1"/><circle cx="8" cy="5.5" r="0.5"/><circle cx="12" cy="5.5" r="0.5"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Investments</span>
+        </a>
+
+        <!-- Insurance -->
+        <a href="/insurance" data-page="insurance" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Insurance</span>
+        </a>
+
+        <!-- Assets -->
+        <a href="/assets" data-page="assets" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Assets</span>
+        </a>
+
+        <!-- Documents -->
+        <a href="/documents" data-page="documents" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2v9z"/><path d="M16 5h-1.5"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h6"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Documents</span>
+        </a>
+
+        <!-- Calendar -->
+        <a href="/calendar" data-page="calendar" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Calendar</span>
+        </a>
+
+        <!-- Bills -->
+        <a href="/bills" data-page="bills" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/><path d="M12 14h.01M8 14h.01M16 14h.01M12 18h.01M8 18h.01M16 18h.01"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Bills</span>
+        </a>
+
+        <!-- Savings Goals -->
+        <a href="/savings-goals" data-page="savings-goals" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-0.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2"/><path d="M2 9.1C1.7 7.9 2.2 6.5 3.3 5.8"/><circle cx="12" cy="11" r="2"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Savings Goals</span>
+        </a>
+
+        <!-- Reports -->
+        <a href="/reports" data-page="reports" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Reports</span>
+        </a>
+
+        <!-- Settings -->
+        <a href="/settings" data-page="settings" class="nav-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150 group">
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Settings</span>
+        </a>
+      </nav>
+
+      <!-- Sidebar Footer -->
+      <div class="shrink-0 px-3 pb-4 space-y-2">
+        <!-- Dark Mode Toggle -->
+        <button id="dark-mode-toggle" class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150">
+          <svg id="icon-moon" class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          <svg id="icon-sun" class="w-5 h-5 shrink-0 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Dark Mode</span>
+        </button>
+
+        <!-- Collapse Toggle (desktop only) -->
+        <button id="sidebar-collapse-btn" class="hidden lg:flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-surface-400 hover:text-white hover:bg-surface-800 transition-colors duration-150">
+          <svg class="w-5 h-5 shrink-0 transition-transform duration-300" id="collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span class="sidebar-label text-sm font-medium truncate">Collapse</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div id="main-wrapper" class="lg:pl-64 transition-all duration-300 min-h-screen flex flex-col">
+      <!-- Top Header -->
+      <header class="sticky top-0 z-20 h-16 bg-white/80 dark:bg-surface-900/80 backdrop-blur-md border-b border-surface-200 dark:border-surface-700 flex items-center px-4 lg:px-6 gap-4 shrink-0" transition:persist>
+        <!-- Mobile hamburger -->
+        <button onclick="toggleSidebar()" class="lg:hidden text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white p-1 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+
+        <!-- Page Title -->
+        <h1 class="text-lg font-semibold text-surface-900 dark:text-white truncate">{title}</h1>
+
+        <div class="flex-1"></div>
+
+        <!-- Search -->
+        <div class="hidden md:flex items-center relative max-w-xs w-full">
+          <svg class="w-4 h-4 absolute left-3 text-surface-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" placeholder="Search..." class="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-surface-300 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 text-surface-900 dark:text-surface-100 placeholder-surface-400 dark:placeholder-surface-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all" />
+        </div>
+
+        <!-- Notification Bell -->
+        <button class="relative text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white p-2 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+          <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-danger-500 rounded-full"></span>
+        </button>
+
+        <!-- User Menu -->
+        <div class="flex items-center gap-3">
+          <UserMenu client:only="vue" />
+        </div>
+      </header>
+
+      <!-- Auth Guard -->
+      <AuthGuard client:only="vue" />
+
+      <!-- Content Slot -->
+      <main class="flex-1 p-4 lg:p-6" transition:animate="fade">
+        <slot />
+      </main>
+    </div>
+
+    <script is:inline>
+      // --- Dark Mode ---
+      function initDarkMode() {
+        const stored = localStorage.getItem('finlife-dark');
+        if (stored === 'true' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+        updateDarkModeIcon();
+      }
+
+      function toggleDarkMode() {
+        document.documentElement.classList.toggle('dark');
+        localStorage.setItem('finlife-dark', document.documentElement.classList.contains('dark'));
+        updateDarkModeIcon();
+      }
+
+      function updateDarkModeIcon() {
+        const isDark = document.documentElement.classList.contains('dark');
+        const moon = document.getElementById('icon-moon');
+        const sun = document.getElementById('icon-sun');
+        if (moon) moon.classList.toggle('hidden', isDark);
+        if (sun) sun.classList.toggle('hidden', !isDark);
+      }
+
+      document.getElementById('dark-mode-toggle')?.addEventListener('click', toggleDarkMode);
+
+      // --- Sidebar Toggle ---
+      function toggleSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+        const isOpen = !sidebar.classList.contains('-translate-x-full');
+        if (isOpen) {
+          sidebar.classList.add('-translate-x-full');
+          overlay?.classList.add('hidden');
+        } else {
+          sidebar.classList.remove('-translate-x-full');
+          overlay?.classList.remove('hidden');
+        }
+      }
+
+      // --- Sidebar Collapse (desktop) ---
+      let sidebarCollapsed = localStorage.getItem('finlife-sidebar-collapsed') === 'true';
+
+      function applySidebarCollapse() {
+        const sidebar = document.getElementById('sidebar');
+        const mainWrapper = document.getElementById('main-wrapper');
+        const collapseIcon = document.getElementById('collapse-icon');
+        const labels = sidebar?.querySelectorAll('.sidebar-label');
+
+        if (sidebarCollapsed) {
+          sidebar?.classList.remove('w-64');
+          sidebar?.classList.add('w-16');
+          mainWrapper?.classList.remove('lg:pl-64');
+          mainWrapper?.classList.add('lg:pl-16');
+          collapseIcon?.classList.add('rotate-180');
+          labels?.forEach(l => l.classList.add('hidden'));
+          sidebar?.setAttribute('data-collapsed', 'true');
+        } else {
+          sidebar?.classList.remove('w-16');
+          sidebar?.classList.add('w-64');
+          mainWrapper?.classList.remove('lg:pl-16');
+          mainWrapper?.classList.add('lg:pl-64');
+          collapseIcon?.classList.remove('rotate-180');
+          labels?.forEach(l => l.classList.remove('hidden'));
+          sidebar?.setAttribute('data-collapsed', 'false');
+        }
+      }
+
+      document.getElementById('sidebar-collapse-btn')?.addEventListener('click', function() {
+        sidebarCollapsed = !sidebarCollapsed;
+        localStorage.setItem('finlife-sidebar-collapsed', sidebarCollapsed);
+        applySidebarCollapse();
+      });
+
+      // --- Active Nav Highlight ---
+      function highlightActiveNav() {
+        const path = window.location.pathname.replace(/\/$/, '') || '/dashboard';
+        const page = path.split('/').filter(Boolean)[0] || 'dashboard';
+        document.querySelectorAll('.nav-link').forEach(link => {
+          const linkPage = link.getAttribute('data-page');
+          if (linkPage === page) {
+            link.classList.add('bg-primary-600/20', 'text-primary-400');
+            link.classList.remove('text-surface-400');
+          } else {
+            link.classList.remove('bg-primary-600/20', 'text-primary-400');
+            link.classList.add('text-surface-400');
+          }
+        });
+      }
+
+      // --- View Transition: preserve dark class & sidebar state before swap ---
+      document.addEventListener('astro:before-swap', function(e) {
+        // Prevent Astro from stripping the dark class from <html>
+        // (server-rendered pages never have class="dark", it's client-only)
+        if (document.documentElement.classList.contains('dark')) {
+          e.newDocument.documentElement.classList.add('dark');
+        }
+        // Preserve sidebar collapse state on main-wrapper padding
+        var mainEl = document.getElementById('main-wrapper');
+        var newMainEl = e.newDocument.getElementById('main-wrapper');
+        if (mainEl && newMainEl) {
+          newMainEl.className = mainEl.className;
+        }
+      });
+
+      // --- Init ---
+      initDarkMode();
+      applySidebarCollapse();
+      highlightActiveNav();
+
+      // Re-run on every Astro View Transition navigation
+      document.addEventListener('astro:page-load', function() {
+        highlightActiveNav();
+      });
+    </script>
+
+    <style>
+      /* Fade transition for page content on navigation */
+      @keyframes astroFadeIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      main[transition-animate=fade] {
+        animation: astroFadeIn 0.25s ease-out;
+      }
+    </style>
+  </body>
+</html>

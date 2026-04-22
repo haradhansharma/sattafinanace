@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import ExpensePage from '../../components/expense/ExpensePage.vue';
+---
+<MainLayout title="Expenditure">
+  <ExpensePage client:only="vue" />
+</MainLayout>

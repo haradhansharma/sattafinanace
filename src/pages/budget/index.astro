@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import BudgetPage from '../../components/budget/BudgetPage.vue';
+---
+<MainLayout title="Budget">
+  <BudgetPage client:only="vue" />
+</MainLayout>

@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import BillsPage from '../../components/bills/BillsPage.vue';
+
+---
+
+<MainLayout title="Bills">
+  <BillsPage client:only="vue" />
+</MainLayout>

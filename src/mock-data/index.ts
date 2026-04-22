@@ -1,0 +1,24 @@
+// Re-exports from individual mock-data modules
+export { mockUser } from './user';
+export { mockBankAccounts } from './bank-accounts';
+export { mockTransactions } from './transactions';
+export { mockIncomes } from './incomes';
+export { mockIncomeSources } from './income-sources';
+export { mockExpenses } from './expenses';
+export { mockExpenseCategories } from './expense-categories';
+export { mockIncomeCategories } from './income-categories';
+export { mockCards } from './cards';
+export { mockLoans } from './loans';
+export { mockBudgets } from './budgets';
+export { mockExchangeRates, currencyList } from './exchange-rates';
+export type { ExchangeRate } from './exchange-rates';
+export { mockInvoices } from './invoices';
+export { mockMortgages, mockHeldMortgages } from './mortgages';
+export { mockLendings } from './lending';
+export { mockInvestments } from './investments';
+export { mockInsurances } from './insurance';
+export { mockAssets } from './assets';
+export { mockDocuments } from './documents';
+export { mockCalendarEvents } from './calendar';
+export { mockBills } from './bills';
+export { mockSavingsGoals } from './savings-goals';

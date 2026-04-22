@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import AssetRegisterPage from '../../components/assets/AssetRegisterPage.vue';
+
+---
+
+<MainLayout title="Asset Register">
+  <AssetRegisterPage client:only="vue" />
+</MainLayout>

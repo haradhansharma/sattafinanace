@@ -1,0 +1,8 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import SavingsGoalsPage from '../../components/savings-goals/SavingsGoalsPage.vue';
+---
+
+<MainLayout title="Savings Goals">
+  <SavingsGoalsPage client:only="vue" />
+</MainLayout>

@@ -1,0 +1,8 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import MortgagePage from '../../components/mortgage/MortgagePage.vue';
+---
+
+<MainLayout title="Mortgage">
+  <MortgagePage client:only="vue" />
+</MainLayout>

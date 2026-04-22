@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import LoansPage from '../../components/loans/LoansPage.vue';
+---
+<MainLayout title="Loans">
+  <LoansPage client:only="vue" />
+</MainLayout>

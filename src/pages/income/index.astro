@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import IncomePage from '../../components/income/IncomePage.vue';
+---
+<MainLayout title="Income">
+  <IncomePage client:only="vue" />
+</MainLayout>

@@ -1,0 +1,8 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import LendingPage from '../../components/lending/LendingPage.vue';
+---
+
+<MainLayout title="Lending">
+  <LendingPage client:only="vue" />
+</MainLayout>

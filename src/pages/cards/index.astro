@@ -1,0 +1,7 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import CardsPage from '../../components/cards/CardsPage.vue';
+---
+<MainLayout title="Cards">
+  <CardsPage client:only="vue" />
+</MainLayout>

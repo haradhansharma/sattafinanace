@@ -1,0 +1,8 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import InvoicePage from '../../components/invoice/InvoicePage.vue';
+---
+
+<MainLayout title="Invoices">
+  <InvoicePage client:only="vue" />
+</MainLayout>

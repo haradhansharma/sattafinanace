@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import InvestmentPage from '../../components/investments/InvestmentPage.vue';
+
+---
+
+<MainLayout title="Investments & Portfolio">
+  <InvestmentPage client:only="vue" />
+</MainLayout>

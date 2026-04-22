@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import FinancialCalendarPage from '../../components/calendar/FinancialCalendarPage.vue';
+
+---
+
+<MainLayout title="Financial Calendar">
+  <FinancialCalendarPage client:only="vue" />
+</MainLayout>

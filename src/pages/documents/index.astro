@@ -1,0 +1,9 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import DocumentVaultPage from '../../components/documents/DocumentVaultPage.vue';
+
+---
+
+<MainLayout title="Document Vault">
+  <DocumentVaultPage client:only="vue" />
+</MainLayout>
