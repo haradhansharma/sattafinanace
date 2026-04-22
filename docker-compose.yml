@@ -1,0 +1,122 @@
+services:
+  # --------------------
+  # 1. BACKEND SERVICE (Django)
+  # --------------------
+  sfbackend:
+    build: .
+    container_name: sfbackend
+    # Use reload for development; remove --reload in production
+    # command: gunicorn config.asgi:application \
+    # --workers 4 \
+    # --worker-class uvicorn.workers.UvicornWorker \
+    # --bind 0.0.0.0:8000 \
+    # --access-logformat '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"' \
+    # --access-logfile /app/logs/gunicorn-access.log \
+    # --error-logfile /app/logs/gunicorn-error.log
+    # Use uvicorn directly for better reloading in dev
+    command: uvicorn config.asgi:application --host 0.0.0.0 --port 8086 --reload  
+    volumes:
+      - .:/app
+      - sfstatic_volume:/app/staticfiles
+      - sfmedia_volume:/app/media
+    ports:
+      - "8086:8086"
+    env_file:
+      - .env
+    depends_on:
+      sfdb:
+        condition: service_healthy
+      sfredis:
+        condition: service_started
+    # restart: unless-stopped
+    networks:
+      - sfnetwork
+
+  # --------------------
+  # 2. DATABASE SERVICE
+  # --------------------
+  sfdb:
+    image: postgres:16-alpine
+    container_name: sfdb
+    environment:
+      POSTGRES_DB: ${SFDB_NAME}
+      POSTGRES_USER: ${SFDB_USER}
+      POSTGRES_PASSWORD: ${SFDB_PASSWORD}
+    volumes:
+      - sfdb_data:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SFDB_USER} -d ${SFDB_NAME} -h localhost || exit 1"]
+      interval: 5s
+      retries: 5
+    # restart: unless-stopped
+    networks:
+      - sfnetwork
+
+  # --------------------
+  # 3. REDIS SERVICE
+  # --------------------
+  sfredis:
+    image: redis:7-alpine
+    container_name: sfredis
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxclients 10000 
+      --timeout 300 
+      --tcp-keepalive 60
+    volumes:
+      - sfredis_data:/data
+    # restart: unless-stopped
+    networks:
+      - sfnetwork
+
+  # --------------------
+  # 4. CELERY WORKER
+  # --------------------
+  sfcelery:
+    build: .
+    container_name: sfcelery
+    command: celery -A config worker -l INFO -Q default,websocket,celery
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - sfredis
+      - sfdb
+      - sfbackend
+    # restart: unless-stopped
+    networks:
+      - sfnetwork 
+
+
+  # --------------------
+  # 6. CELERY BEAT (The Scheduler)
+  # --------------------
+  sfcelerybeat:
+    build: .
+    container_name: sfcelerybeat
+    command: >
+      celery -A config beat -l info
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - sfredis
+      - sfdb
+      - sfbackend
+    # restart: unless-stopped
+    networks:
+      - sfnetwork
+
+volumes:
+  sfdb_data:
+  sfstatic_volume:
+  sfmedia_volume:
+  sfredis_data:
+
+networks:
+  sfnetwork:
+    driver: bridge
