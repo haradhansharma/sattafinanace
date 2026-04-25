@@ -1,16 +1,27 @@
 """
-Card app schemas for FinLife Personal Finance SaaS.
+Schemas for the Card app — all field names in camelCase matching frontend exactly.
 
-All schema fields use camelCase to match the frontend TypeScript interfaces exactly.
-Ninja's resolve_X static methods handle camelCase → snake_case model mapping.
+Uses model_validator(mode='before') to handle Django model instances via
+Pydantic v2.  This avoids the resolve_ static method issue where Pydantic v2
+cannot map camelCase schema fields to snake_case Django attributes.
+
+Frontend interface:
+  Card: id, createdAt, updatedAt, bankAccountId, name, type ('debit'|'credit'),
+        cardNumber, holderName, expiryDate, brand ('visa'|'mastercard'|'amex'|'discover'),
+        creditLimit?, currentBalance, billingCycle ({start, end}), dueDate,
+        isActive, color?, currency?, secondaryCurrency?,
+        secondaryCreditLimit?, secondaryCurrentBalance?
 """
 
-from typing import Optional
+from typing import Optional, Any
 
 from ninja import Schema
+from pydantic import model_validator
 
 
-# ==================== Message ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class MessageOut(Schema):
@@ -19,7 +30,9 @@ class MessageOut(Schema):
     message: str
 
 
-# ==================== Billing Cycle ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Billing Cycle
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class BillingCycleOut(Schema):
@@ -36,21 +49,12 @@ class BillingCycleIn(Schema):
     end: int
 
 
-# ==================== Card Schemas ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Card Schemas
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class CardOut(Schema):
-    """
-    Card response matching frontend interface:
-      id, createdAt, updatedAt, bankAccountId (FK→BankAccount),
-      name, type ('debit'|'credit'), cardNumber, holderName,
-      expiryDate, brand ('visa'|'mastercard'|'amex'|'discover'),
-      creditLimit?, currentBalance,
-      billingCycle ({start, end}), dueDate, isActive,
-      color?, currency?, secondaryCurrency?,
-      secondaryCreditLimit?, secondaryCurrentBalance?
-    """
-
     id: str
     createdAt: str
     updatedAt: str
@@ -72,66 +76,46 @@ class CardOut(Schema):
     secondaryCreditLimit: Optional[int] = None
     secondaryCurrentBalance: Optional[int] = None
 
-    @staticmethod
-    def resolve_id(obj):
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_createdAt(obj):
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj):
-        return obj.updated_at.isoformat()
-
-    @staticmethod
-    def resolve_bankAccountId(obj):
-        return str(obj.bank_account_id)
-
-    @staticmethod
-    def resolve_cardNumber(obj):
-        return obj.card_number
-
-    @staticmethod
-    def resolve_holderName(obj):
-        return obj.holder_name
-
-    @staticmethod
-    def resolve_expiryDate(obj):
-        return obj.expiry_date
-
-    @staticmethod
-    def resolve_creditLimit(obj):
-        return obj.credit_limit
-
-    @staticmethod
-    def resolve_currentBalance(obj):
-        return obj.current_balance
-
-    @staticmethod
-    def resolve_billingCycle(obj):
-        cycle = obj.billing_cycle or {"start": 0, "end": 0}
-        return BillingCycleOut(start=cycle.get("start", 0), end=cycle.get("end", 0))
-
-    @staticmethod
-    def resolve_dueDate(obj):
-        return obj.due_date
-
-    @staticmethod
-    def resolve_isActive(obj):
-        return obj.is_active
-
-    @staticmethod
-    def resolve_secondaryCurrency(obj):
-        return obj.secondary_currency
-
-    @staticmethod
-    def resolve_secondaryCreditLimit(obj):
-        return obj.secondary_credit_limit
-
-    @staticmethod
-    def resolve_secondaryCurrentBalance(obj):
-        return obj.secondary_current_balance
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            cycle = data.billing_cycle or {"start": 0, "end": 0}
+            return {
+                "id": str(data.id),
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+                "bankAccountId": str(data.bank_account_id),
+                "name": data.name,
+                "type": data.type,
+                "cardNumber": data.card_number,
+                "holderName": data.holder_name,
+                "expiryDate": data.expiry_date,
+                "brand": data.brand,
+                "creditLimit": data.credit_limit,
+                "currentBalance": data.current_balance,
+                "billingCycle": BillingCycleOut(
+                    start=cycle.get("start", 0),
+                    end=cycle.get("end", 0),
+                ),
+                "dueDate": data.due_date,
+                "isActive": data.is_active,
+                "color": data.color,
+                "currency": data.currency,
+                "secondaryCurrency": data.secondary_currency,
+                "secondaryCreditLimit": data.secondary_credit_limit,
+                "secondaryCurrentBalance": data.secondary_current_balance,
+            }
+        return data
 
 
 class CardCreate(Schema):

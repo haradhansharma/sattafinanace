@@ -17,11 +17,12 @@ class NotificationPreferenceSchema(Schema):
 class UserOut(Schema):
     """
     Full user response matching frontend User type.
-    Fields: id, name, email, avatar, currency, dateFormat,
+    Fields: id, slug, name, email, avatar, currency, dateFormat,
             darkMode, notifications, createdAt, updatedAt
     """
 
     id: str
+    slug: str = ""
     name: str
     email: str
     avatar: str = ""
@@ -35,6 +36,10 @@ class UserOut(Schema):
     @staticmethod
     def resolve_id(obj):
         return str(obj.id)
+
+    @staticmethod
+    def resolve_slug(obj):
+        return str(obj.slug) if obj.slug else ""
 
     @staticmethod
     def resolve_avatar(obj):
@@ -98,7 +103,9 @@ class TokenOut(Schema):
     """Token response after login/register — matches frontend auth store state."""
 
     access: str
-    refresh: Optional[str] = Field(default=None, description="Refresh token for token rotation")
+    refresh: Optional[str] = Field(
+        default=None, description="Refresh token for token rotation"
+    )
     token_type: str = "bearer"
     user: UserOut
 
@@ -107,3 +114,94 @@ class MessageOut(Schema):
     """Generic message response."""
 
     message: str
+
+
+# ==================== OTP Schemas ====================
+
+
+class OTPVerifyIn(Schema):
+    """OTP verification — works for registration, login, and password change."""
+
+    email: str
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    purpose: str = Field(
+        ...,
+        pattern="^(register|login|change_password|forgot_password)$",
+        description="'register', 'login', 'change_password', or 'forgot_password'",
+    )
+
+
+class ResendOtpIn(Schema):
+    """Request a new OTP to be sent."""
+
+    email: str
+    purpose: str = Field(
+        ...,
+        pattern="^(register|login|change_password|forgot_password)$",
+        description="'register', 'login', 'change_password', or 'forgot_password'",
+    )
+
+
+class ChangePasswordIn(Schema):
+    """Password change request — requires current password."""
+
+    current_password: str = Field(..., min_length=4, description="Current password")
+
+
+class ForgotPasswordIn(Schema):
+    """Forgot password request — requires email only."""
+
+    email: str = Field(..., description="Registered email address")
+
+
+class ForgotPasswordConfirmIn(Schema):
+    """Forgot password confirmation — requires OTP and new password."""
+
+    email: str
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    new_password: str = Field(
+        ..., min_length=4, description="New password (min 4 chars)"
+    )
+
+
+class ChangePasswordConfirmIn(Schema):
+    """Password change confirmation — requires OTP and new password."""
+
+    email: str
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    new_password: str = Field(
+        ..., min_length=4, description="New password (min 4 chars)"
+    )
+
+
+class ForgotPasswordIn(Schema):
+    """Forgot password request — requires email only."""
+
+    email: str = Field(..., description="Registered email address")
+
+
+class ForgotPasswordConfirmIn(Schema):
+    """Forgot password confirmation — requires OTP and new password."""
+
+    email: str
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
+    new_password: str = Field(
+        ..., min_length=4, description="New password (min 4 chars)"
+    )
+
+
+# ==================== Token Schemas ====================
+
+
+class RefreshTokenIn(Schema):
+    """Refresh token request."""
+
+    refresh: str = Field(..., description="Refresh token")
+
+
+class RefreshTokenOut(Schema):
+    """Refresh token response."""
+
+    access: str
+    refresh: str = None
+    token_type: str = "bearer"

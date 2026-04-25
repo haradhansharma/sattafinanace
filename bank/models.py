@@ -7,9 +7,17 @@ TenantMixin adds `owner = ForeignKey(settings.AUTH_USER_MODEL, on_delete=CASCADE
 
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from common.models import TenantMixin
+
+
+# ── Lazy FK to ExpenseCategory (app may not be installed yet) ──
+def _get_category_model():
+    from expense.models import ExpenseCategory
+
+    return ExpenseCategory
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -129,8 +137,16 @@ class Transaction(TenantMixin):
 
     type = models.CharField(max_length=10, choices=TRANSACTION_TYPE_CHOICES)
     amount = models.BigIntegerField(default=0)
-    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
-    category_id = models.UUIDField()
+    direction = models.CharField(
+        max_length=10, choices=DIRECTION_CHOICES, editable=False
+    )
+    category = models.ForeignKey(
+        "expense.ExpenseCategory",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bank_transactions",
+    )
     date = models.DateField()
     description = models.TextField(blank=True, default="")
     reference_id = models.CharField(max_length=100, blank=True, default="")
@@ -140,11 +156,46 @@ class Transaction(TenantMixin):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ── Direction mapping: auto-derived from type ──
+    _TYPE_DIRECTION_MAP = {
+        "income": "credit",
+        "expense": "debit",
+    }
+
     class Meta:
         db_table = "transactions"
         verbose_name = "Transaction"
         verbose_name_plural = "Transactions"
         ordering = ("-date", "-created_at")
+
+    def clean(self):
+        """Validate type/direction consistency."""
+        if self.type in self._TYPE_DIRECTION_MAP:
+            expected = self._TYPE_DIRECTION_MAP[self.type]
+            if self.direction and self.direction != expected:
+                raise ValidationError(
+                    {
+                        "direction": f"For type '{self.type}', direction must be '{expected}', not '{self.direction}'."
+                    }
+                )
+        if not self.type and not self.direction:
+            raise ValidationError(
+                "At least one of 'type' or 'direction' must be provided."
+            )
+
+    def save(self, *args, **kwargs):
+        """Auto-set direction from type before saving.
+
+        Rules:
+          income  → credit
+          expense → debit
+          transfer → keep direction as-is (explicitly set by caller:
+                       debit from source, credit to destination)
+        """
+        if self.type in self._TYPE_DIRECTION_MAP:
+            self.direction = self._TYPE_DIRECTION_MAP[self.type]
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.get_type_display()} — {self.amount} ({self.date})"

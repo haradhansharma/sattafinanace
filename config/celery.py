@@ -16,6 +16,11 @@ app.conf.worker_send_task_events = True
 
 
 app.conf.beat_schedule = {
+    # Clean up expired/old OTP records every 30 minutes
+    "cleanup-expired-otps": {
+        "task": "users.cleanup_expired_otps",
+        "schedule": 1800.0,  # Every 30 minutes
+    },
     # 'task-every-30-minutes': {
     #     'task': 'myapp.tasks.some_task',w
     #     'schedule': 1800.0,  # 30 minutes

@@ -1,10 +1,10 @@
 """
 JWT authentication helpers for FinLife.
 Uses ninja_jwt for token creation/verification.
-"""
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+Note: get_current_user_id_from_token() is a SYNC, CPU-only function
+(no DB calls) — safe to call from async context.
+"""
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -36,21 +36,21 @@ def create_token_pair(user) -> dict:
     }
 
 
-def get_current_user_from_token(token: str):
+def get_current_user_id_from_token(token: str):
     """
-    Validate a JWT token and return the User instance.
+    Validate a JWT token and return the user ID (UUID string).
     Returns None if token is invalid or expired.
+
+    This function is SYNC and CPU-only (no DB calls).
+    Callers should do the async User.objects.aget() themselves.
     """
     try:
-        # ninja_jwt AccessToken validates automatically
         access_token = AccessToken(token)
         user_id = (
             access_token.get(settings.AUTH_USER_MODEL + " id")
             or access_token.get(api_settings.USER_ID_FIELD)
             or access_token.get("user_id")
         )
-        if user_id is None:
-            return None
-        return User.objects.get(pk=user_id)
+        return user_id
     except Exception:
         return None

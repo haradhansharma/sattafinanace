@@ -1,6 +1,10 @@
 """
 Schemas for the Bank app — all field names in camelCase matching frontend exactly.
 
+Uses model_validator(mode='before') to handle Django model instances via
+Pydantic v2.  This avoids the resolve_ static method issue where Pydantic v2
+cannot map camelCase schema fields to snake_case Django attributes.
+
 Frontend interfaces:
   BankAccount:   id, bankName, accountNumber, accountName, type, openingBalance,
                  icon?, color?, currency?, isActive, createdAt, updatedAt
@@ -9,9 +13,10 @@ Frontend interfaces:
                  createdAt, updatedAt
 """
 
-from typing import List, Optional
+from typing import Optional, Any, List
 
 from ninja import Schema
+from pydantic import model_validator
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -44,37 +49,34 @@ class BankAccountOut(Schema):
     createdAt: str
     updatedAt: str
 
-    @staticmethod
-    def resolve_id(obj) -> str:
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_bankName(obj) -> str:
-        return obj.bank_name
-
-    @staticmethod
-    def resolve_accountNumber(obj) -> str:
-        return obj.masked_account_number
-
-    @staticmethod
-    def resolve_accountName(obj) -> str:
-        return obj.account_name
-
-    @staticmethod
-    def resolve_openingBalance(obj) -> int:
-        return obj.opening_balance
-
-    @staticmethod
-    def resolve_isActive(obj) -> bool:
-        return obj.is_active
-
-    @staticmethod
-    def resolve_createdAt(obj) -> str:
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj) -> str:
-        return obj.updated_at.isoformat()
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "bankName": data.bank_name,
+                "accountNumber": data.masked_account_number,
+                "accountName": data.account_name,
+                "type": data.type,
+                "openingBalance": data.opening_balance,
+                "icon": data.icon,
+                "color": data.color,
+                "currency": data.currency,
+                "isActive": data.is_active,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class BankAccountCreate(Schema):
@@ -123,7 +125,7 @@ class TransactionOut(Schema):
     direction: str
     bankAccountId: str
     toBankAccountId: Optional[str] = None
-    categoryId: str
+    categoryId: Optional[str] = None
     date: str
     description: str
     referenceId: Optional[str] = ""
@@ -132,48 +134,53 @@ class TransactionOut(Schema):
     createdAt: str
     updatedAt: str
 
-    @staticmethod
-    def resolve_id(obj) -> str:
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_bankAccountId(obj) -> str:
-        return str(obj.bank_account_id)
-
-    @staticmethod
-    def resolve_toBankAccountId(obj) -> Optional[str]:
-        if obj.to_bank_account_id:
-            return str(obj.to_bank_account_id)
-        return None
-
-    @staticmethod
-    def resolve_categoryId(obj) -> str:
-        return str(obj.category_id)
-
-    @staticmethod
-    def resolve_referenceId(obj) -> str:
-        return obj.reference_id
-
-    @staticmethod
-    def resolve_date(obj) -> str:
-        return obj.date.isoformat()
-
-    @staticmethod
-    def resolve_createdAt(obj) -> str:
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj) -> str:
-        return obj.updated_at.isoformat()
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "type": data.type,
+                "amount": data.amount,
+                "direction": data.direction,
+                "bankAccountId": str(data.bank_account_id),
+                "toBankAccountId": (
+                    str(data.to_bank_account_id) if data.to_bank_account_id else None
+                ),
+                "categoryId": (str(data.category_id) if data.category_id else None),
+                "date": (
+                    data.date.isoformat()
+                    if hasattr(data.date, "isoformat")
+                    else str(data.date)
+                ),
+                "description": data.description,
+                "referenceId": data.reference_id,
+                "tags": data.tags or [],
+                "currency": data.currency,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class TransactionCreate(Schema):
     type: str
     amount: int
-    direction: str
+    direction: Optional[str] = (
+        None  # Auto-set from type for income/expense; required for transfer
+    )
     bankAccountId: str
     toBankAccountId: Optional[str] = None
-    categoryId: str
+    categoryId: Optional[str] = None
     date: str
     description: str = ""
     referenceId: Optional[str] = ""
@@ -184,7 +191,7 @@ class TransactionCreate(Schema):
 class TransactionUpdate(Schema):
     type: Optional[str] = None
     amount: Optional[int] = None
-    direction: Optional[str] = None
+    direction: Optional[str] = None  # Only needed for transfer
     bankAccountId: Optional[str] = None
     toBankAccountId: Optional[str] = None
     categoryId: Optional[str] = None

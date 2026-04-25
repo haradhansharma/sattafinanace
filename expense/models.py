@@ -33,6 +33,7 @@ class ExpenseCategory(TenantMixin):
     color = models.CharField(max_length=50, blank=True, default="")
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default="needs")
     budget_limit = models.BigIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=10, default="BDT")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -65,7 +66,9 @@ class Expense(TenantMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     amount = models.BigIntegerField(default=0)
     date = models.DateField()
-    bank_account_id = models.UUIDField()  # FK→BankAccount stored as UUID
+    bank_account_id = models.UUIDField(
+        null=True, blank=True
+    )  # FK→BankAccount stored as UUID (optional for cash expenses)
     card_id = models.UUIDField(null=True, blank=True)  # FK→Card stored as UUID
     category = models.ForeignKey(
         ExpenseCategory,

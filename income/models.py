@@ -46,7 +46,7 @@ RECURRING_CYCLE_CHOICES = [
 
 # ──────────────────────────────────────────────────────────────────────────────
 # IncomeSource
-# Frontend: id, name, type, isActive, monthlyAmount?, createdAt, updatedAt
+# Frontend: id, name, type, isActive, monthlyAmount?, currency, createdAt, updatedAt
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -59,6 +59,7 @@ class IncomeSource(TenantMixin):
     )
     is_active = models.BooleanField(default=True)
     monthly_amount = models.BigIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=3, default="BDT")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -118,7 +119,9 @@ class Income(TenantMixin):
     )
     amount = models.BigIntegerField(default=0)
     date = models.DateField()
-    bank_account_id = models.UUIDField()  # references BankAccount id
+    bank_account_id = models.UUIDField(
+        null=True, blank=True
+    )  # references BankAccount id, optional (cash income)
     category = models.ForeignKey(
         IncomeCategory,
         on_delete=models.CASCADE,

@@ -2,15 +2,31 @@
 Expense app schemas for FinLife Personal Finance SaaS.
 
 All schema fields use camelCase to match the frontend TypeScript interfaces exactly.
-Ninja's resolve_X static methods handle camelCase → snake_case model mapping.
+Uses model_validator(mode='before') to handle Django model instances via
+Pydantic v2.  This avoids the resolve_ static method issue where Pydantic v2
+cannot map camelCase schema fields to snake_case Django attributes.
+
+Each Out schema detects whether it received a Django model or a plain dict
+and normalises accordingly.
+
+Frontend interfaces:
+  ExpenseCategory: id, createdAt, updatedAt, name, icon, color,
+                   type ('needs'|'wants'|'savings'|'investments'),
+                   budgetLimit?, currency?
+  Expense:         id, createdAt, updatedAt, amount, date,
+                   bankAccountId?, cardId?, categoryId, transactionId?,
+                   description, isRecurring, recurringCycle?, tags?, currency?
 """
 
-from typing import List, Optional
+from typing import Optional, Any, List
 
 from ninja import Schema
+from pydantic import model_validator
 
 
-# ==================== Message ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Shared
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class MessageOut(Schema):
@@ -19,16 +35,12 @@ class MessageOut(Schema):
     message: str
 
 
-# ==================== Expense Category Schemas ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Expense Category Schemas
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class ExpenseCategoryOut(Schema):
-    """
-    ExpenseCategory response matching frontend interface:
-      id, createdAt, updatedAt, name, icon, color,
-      type ('needs'|'wants'|'savings'|'investments'), budgetLimit?
-    """
-
     id: str
     createdAt: str
     updatedAt: str
@@ -37,22 +49,33 @@ class ExpenseCategoryOut(Schema):
     color: str
     type: str
     budgetLimit: Optional[int] = None
+    currency: Optional[str] = None
 
-    @staticmethod
-    def resolve_id(obj):
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_createdAt(obj):
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj):
-        return obj.updated_at.isoformat()
-
-    @staticmethod
-    def resolve_budgetLimit(obj):
-        return obj.budget_limit
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "name": data.name,
+                "icon": data.icon,
+                "color": data.color,
+                "type": data.type,
+                "budgetLimit": data.budget_limit,
+                "currency": getattr(data, "currency", "BDT") or None,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class ExpenseCategoryCreate(Schema):
@@ -63,6 +86,7 @@ class ExpenseCategoryCreate(Schema):
     color: str = ""
     type: str = "needs"
     budgetLimit: Optional[int] = None
+    currency: str = "BDT"
 
 
 class ExpenseCategoryUpdate(Schema):
@@ -73,26 +97,21 @@ class ExpenseCategoryUpdate(Schema):
     color: Optional[str] = None
     type: Optional[str] = None
     budgetLimit: Optional[int] = None
+    currency: Optional[str] = None
 
 
-# ==================== Expense Schemas ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Expense Schemas
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class ExpenseOut(Schema):
-    """
-    Expense response matching frontend interface:
-      id, createdAt, updatedAt, amount, date,
-      bankAccountId (FK→BankAccount), cardId? (FK→Card),
-      categoryId (FK→ExpenseCategory), transactionId?,
-      description, isRecurring, recurringCycle?, tags?, currency?
-    """
-
     id: str
     createdAt: str
     updatedAt: str
     amount: int
     date: str
-    bankAccountId: str
+    bankAccountId: Optional[str] = None
     cardId: Optional[str] = None
     categoryId: str
     transactionId: Optional[str] = None
@@ -102,45 +121,44 @@ class ExpenseOut(Schema):
     tags: List[str]
     currency: str
 
-    @staticmethod
-    def resolve_id(obj):
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_createdAt(obj):
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj):
-        return obj.updated_at.isoformat()
-
-    @staticmethod
-    def resolve_date(obj):
-        return obj.date.isoformat()
-
-    @staticmethod
-    def resolve_bankAccountId(obj):
-        return str(obj.bank_account_id)
-
-    @staticmethod
-    def resolve_cardId(obj):
-        return str(obj.card_id) if obj.card_id else None
-
-    @staticmethod
-    def resolve_categoryId(obj):
-        return str(obj.category_id)
-
-    @staticmethod
-    def resolve_transactionId(obj):
-        return str(obj.transaction_id) if obj.transaction_id else None
-
-    @staticmethod
-    def resolve_recurringCycle(obj):
-        return obj.recurring_cycle
-
-    @staticmethod
-    def resolve_tags(obj):
-        return obj.tags or []
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "amount": data.amount,
+                "date": (
+                    data.date.isoformat()
+                    if hasattr(data.date, "isoformat")
+                    else str(data.date)
+                ),
+                "bankAccountId": (
+                    str(data.bank_account_id) if data.bank_account_id else None
+                ),
+                "cardId": str(data.card_id) if data.card_id else None,
+                "categoryId": str(data.category_id),
+                "transactionId": (
+                    str(data.transaction_id) if data.transaction_id else None
+                ),
+                "description": data.description,
+                "isRecurring": data.is_recurring,
+                "recurringCycle": data.recurring_cycle,
+                "tags": data.tags or [],
+                "currency": data.currency,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class ExpenseCreate(Schema):
@@ -148,7 +166,7 @@ class ExpenseCreate(Schema):
 
     amount: int
     date: str
-    bankAccountId: str
+    bankAccountId: Optional[str] = None
     cardId: Optional[str] = None
     categoryId: str
     transactionId: Optional[str] = None
@@ -175,7 +193,9 @@ class ExpenseUpdate(Schema):
     currency: Optional[str] = None
 
 
-# ==================== Category Breakdown ====================
+# ──────────────────────────────────────────────────────────────────────────────
+# Category Breakdown
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class CategoryBreakdownOut(Schema):

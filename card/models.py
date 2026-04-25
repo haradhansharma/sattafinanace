@@ -10,11 +10,12 @@ import uuid
 from django.db import models
 
 from common.models import TenantMixin
+from bank.models import BankAccount
 
 
 class Card(TenantMixin):
     """
-    Card (debit or credit) linked to a bank account.
+    Card (debit or credit) linked to a bank account via ForeignKey.
     Frontend fields: id, createdAt, updatedAt, bankAccountId (FK→BankAccount),
                      name, type ('debit'|'credit'), cardNumber, holderName,
                      expiryDate, brand ('visa'|'mastercard'|'amex'|'discover'),
@@ -36,10 +37,18 @@ class Card(TenantMixin):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    bank_account_id = models.UUIDField()  # FK→BankAccount stored as UUID
+    bank_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.CASCADE,
+        related_name="cards",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=255)
     type = models.CharField(max_length=10, choices=CARD_TYPE_CHOICES)
-    card_number = models.CharField(max_length=4)  # Last 4 digits only
+    card_number = models.CharField(
+        max_length=19
+    )  # Full or partial card number (e.g. "1234" or "**** **** **** 1234")
     holder_name = models.CharField(max_length=255)
     expiry_date = models.CharField(max_length=7)  # "MM/YYYY"
     brand = models.CharField(max_length=20, choices=BRAND_CHOICES)

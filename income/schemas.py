@@ -1,17 +1,26 @@
 """
 Schemas for the Income app — all field names in camelCase matching frontend exactly.
 
+Uses model_validator(mode='before') to handle Django model instances via
+Pydantic v2 from_attributes.  This avoids the resolve_ static method issue
+where Pydantic v2 cannot map camelCase schema fields to snake_case Django
+attributes (e.g. isActive → is_active, createdAt → created_at).
+
+Each Out schema detects whether it received a Django model or a plain dict
+and normalises accordingly.
+
 Frontend interfaces:
-  IncomeSource:   id, name, type, isActive, monthlyAmount?, createdAt, updatedAt
+  IncomeSource:   id, name, type, isActive, monthlyAmount?, currency, createdAt, updatedAt
   IncomeCategory: id, name, icon, color, type, createdAt, updatedAt
   Income:         id, sourceId, amount, date, bankAccountId, categoryId,
                   transactionId?, description, isRecurring, recurringCycle?,
-                  currency?, createdAt, updatedAt
+                  currency, createdAt, updatedAt
 """
 
-from typing import Optional
+from typing import Optional, Any
 
 from ninja import Schema
+from pydantic import model_validator
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -39,17 +48,29 @@ class IncomeCategoryOut(Schema):
     createdAt: str
     updatedAt: str
 
-    @staticmethod
-    def resolve_id(obj) -> str:
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_createdAt(obj) -> str:
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj) -> str:
-        return obj.updated_at.isoformat()
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "name": data.name,
+                "icon": data.icon,
+                "color": data.color,
+                "type": data.type,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class IncomeCategoryCreate(Schema):
@@ -77,28 +98,34 @@ class IncomeSourceOut(Schema):
     type: str
     isActive: bool
     monthlyAmount: Optional[int] = None
+    currency: str = "BDT"
     createdAt: str
     updatedAt: str
 
-    @staticmethod
-    def resolve_id(obj) -> str:
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_isActive(obj) -> bool:
-        return obj.is_active
-
-    @staticmethod
-    def resolve_monthlyAmount(obj) -> Optional[int]:
-        return obj.monthly_amount
-
-    @staticmethod
-    def resolve_createdAt(obj) -> str:
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj) -> str:
-        return obj.updated_at.isoformat()
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "name": data.name,
+                "type": data.type,
+                "isActive": data.is_active,
+                "monthlyAmount": data.monthly_amount,
+                "currency": data.currency,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class IncomeSourceCreate(Schema):
@@ -106,6 +133,7 @@ class IncomeSourceCreate(Schema):
     type: str = "salary"
     isActive: bool = True
     monthlyAmount: Optional[int] = None
+    currency: str = "BDT"
 
 
 class IncomeSourceUpdate(Schema):
@@ -113,6 +141,7 @@ class IncomeSourceUpdate(Schema):
     type: Optional[str] = None
     isActive: Optional[bool] = None
     monthlyAmount: Optional[int] = None
+    currency: Optional[str] = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -125,7 +154,7 @@ class IncomeOut(Schema):
     sourceId: str
     amount: int
     date: str
-    bankAccountId: str
+    bankAccountId: Optional[str] = None
     categoryId: str
     transactionId: Optional[str] = None
     description: str
@@ -135,52 +164,50 @@ class IncomeOut(Schema):
     createdAt: str
     updatedAt: str
 
-    @staticmethod
-    def resolve_id(obj) -> str:
-        return str(obj.id)
-
-    @staticmethod
-    def resolve_sourceId(obj) -> str:
-        return str(obj.source_id)
-
-    @staticmethod
-    def resolve_date(obj) -> str:
-        return obj.date.isoformat()
-
-    @staticmethod
-    def resolve_bankAccountId(obj) -> str:
-        return str(obj.bank_account_id)
-
-    @staticmethod
-    def resolve_categoryId(obj) -> str:
-        return str(obj.category_id)
-
-    @staticmethod
-    def resolve_transactionId(obj) -> Optional[str]:
-        return str(obj.transaction_id) if obj.transaction_id else None
-
-    @staticmethod
-    def resolve_isRecurring(obj) -> bool:
-        return obj.is_recurring
-
-    @staticmethod
-    def resolve_recurringCycle(obj) -> Optional[str]:
-        return obj.recurring_cycle
-
-    @staticmethod
-    def resolve_createdAt(obj) -> str:
-        return obj.created_at.isoformat()
-
-    @staticmethod
-    def resolve_updatedAt(obj) -> str:
-        return obj.updated_at.isoformat()
+    @model_validator(mode="before")
+    @classmethod
+    def _from_django(cls, data: Any) -> Any:
+        """Convert Django model instance to a dict with camelCase keys."""
+        if hasattr(data, "_meta"):
+            return {
+                "id": str(data.id),
+                "sourceId": str(data.source_id),
+                "amount": data.amount,
+                "date": (
+                    data.date.isoformat()
+                    if hasattr(data.date, "isoformat")
+                    else str(data.date)
+                ),
+                "bankAccountId": (
+                    str(data.bank_account_id) if data.bank_account_id else None
+                ),
+                "categoryId": str(data.category_id),
+                "transactionId": (
+                    str(data.transaction_id) if data.transaction_id else None
+                ),
+                "description": data.description,
+                "isRecurring": data.is_recurring,
+                "recurringCycle": data.recurring_cycle,
+                "currency": data.currency,
+                "createdAt": (
+                    data.created_at.isoformat()
+                    if hasattr(data.created_at, "isoformat")
+                    else str(data.created_at)
+                ),
+                "updatedAt": (
+                    data.updated_at.isoformat()
+                    if hasattr(data.updated_at, "isoformat")
+                    else str(data.updated_at)
+                ),
+            }
+        return data
 
 
 class IncomeCreate(Schema):
     sourceId: str
     amount: int
     date: str
-    bankAccountId: str
+    bankAccountId: Optional[str] = None
     categoryId: str
     transactionId: Optional[str] = None
     description: str = ""
