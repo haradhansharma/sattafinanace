@@ -9,7 +9,7 @@
  * this service (or the domain-specific services that wrap it).
  */
 
-import { apiBridge } from './api-bridge';
+import { api } from './api-bridge';
 import {
   mockUser,
   mockBankAccounts,
@@ -77,7 +77,7 @@ class DataService {
   async getAll<T>(entity: string): Promise<T[]> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.get<T[]>(`/${entity}`);
+      return api.get<T[]>(`/${entity}`);
     }
     return (this.mockRegistry[entity]?.() ?? []) as T[];
   }
@@ -86,7 +86,7 @@ class DataService {
   async getById<T>(entity: string, id: string): Promise<T | null> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.get<T | null>(`/${entity}/${id}`);
+      return api.get<T | null>(`/${entity}/${id}`);
     }
     const items = (this.mockRegistry[entity]?.() ?? []) as Array<{ id: string } & T>;
     const found = items.find(item => item.id === id);
@@ -97,7 +97,7 @@ class DataService {
   async create<T>(entity: string, data: Omit<T, 'id' | 'createdAt' | 'updatedAt'>): Promise<T> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.post<T>(`/${entity}`, data);
+      return api.post<T>(`/${entity}`, data);
     }
     const now = new Date().toISOString();
     return {
@@ -116,7 +116,7 @@ class DataService {
   ): Promise<T> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.put<T>(`/${entity}/${id}`, data);
+      return api.put<T>(`/${entity}/${id}`, data);
     }
     const existing = await this.getById<T & { id: string }>(entity, id);
     if (!existing) throw new Error(`${entity} with id "${id}" not found`);
@@ -131,7 +131,7 @@ class DataService {
   async remove(entity: string, id: string): Promise<void> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      await apiBridge.delete<void>(`/${entity}/${id}`);
+      await api.delete<void>(`/${entity}/${id}`);
       return;
     }
     // In mock mode this is a no-op; stores handle local removal
@@ -143,7 +143,7 @@ class DataService {
   async getUser() {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.get('/user');
+      return api.get('/user');
     }
     return { ...mockUser };
   }
@@ -157,7 +157,7 @@ class DataService {
   async getExchangeRate(currency: Currency): Promise<ExchangeRate | null> {
     await delay(this.latency);
     if (this.dataSource === 'api') {
-      return apiBridge.get<ExchangeRate>(`/exchange-rates/${currency}`);
+      return api.get<ExchangeRate>(`/exchange-rates/${currency}`);
     }
     return currencyList.find(r => r.currency === currency) ?? null;
   }

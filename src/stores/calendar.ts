@@ -1,19 +1,58 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { CalendarEvent, CalendarEventCategory, CalendarEventStatus, RecurrencePattern } from '../types';
-import { mockCalendarEvents } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type { CalendarEvent, CalendarEventCategory } from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
+import { ApiError } from '../services/api-bridge';
 
 export const useCalendarStore = defineStore('calendar', () => {
-  const events = ref<CalendarEvent[]>(mockCalendarEvents.map(e => ({
-    ...e,
-    tags: e.tags || [],
-  })));
+  // ==================== State ====================
+  const events = ref<CalendarEvent[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  // ==================== Fetchers ====================
+
+  async function fetchEvents(params?: {
+    category?: string;
+    status?: string;
+    priority?: string;
+  }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      events.value = await fetchAllPages<CalendarEvent>('/calendar/', { params });
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch events';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchEventById(id: string): Promise<CalendarEvent> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const event = await api.get<CalendarEvent>(`/calendar/${id}/`);
+      const index = events.value.findIndex(e => e.id === id);
+      if (index !== -1) {
+        events.value[index] = event;
+      } else {
+        events.value.push(event);
+      }
+      return event;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch event';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
   // ==================== Computed ====================
 
   const totalEvents = computed(() => events.value.length);
+
   const recurringEvents = computed(() => events.value.filter(e => e.recurrence !== 'none'));
 
   const upcomingEvents = computed(() => {
@@ -44,7 +83,6 @@ export const useCalendarStore = defineStore('calendar', () => {
     events.value.filter(e => e.status === 'completed')
   );
 
-  // Events this month
   const eventsThisMonth = computed(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -55,7 +93,65 @@ export const useCalendarStore = defineStore('calendar', () => {
     });
   });
 
-  // Events in a specific month (for calendar grid)
+  // ==================== CRUD ====================
+
+  async function addEvent(data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>): Promise<CalendarEvent> {
+    error.value = null;
+    try {
+      const event = await api.post<CalendarEvent>('/calendar/', data);
+      events.value.push(event);
+      return event;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create event';
+      throw err;
+    }
+  }
+
+  async function updateCalendarEvent(id: string, data: Partial<CalendarEvent>): Promise<CalendarEvent | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<CalendarEvent>(`/calendar/${id}/`, data);
+      const index = events.value.findIndex(e => e.id === id);
+      if (index !== -1) {
+        events.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update event';
+      throw err;
+    }
+  }
+
+  async function deleteEvent(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/calendar/${id}/`);
+      const index = events.value.findIndex(e => e.id === id);
+      if (index !== -1) {
+        events.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete event';
+      throw err;
+    }
+  }
+
+  // ==================== Status Helpers ====================
+
+  async function completeEvent(id: string): Promise<CalendarEvent | null> {
+    return updateCalendarEvent(id, { status: 'completed' });
+  }
+
+  async function cancelEvent(id: string): Promise<CalendarEvent | null> {
+    return updateCalendarEvent(id, { status: 'cancelled' });
+  }
+
+  async function markAsUpcoming(id: string): Promise<CalendarEvent | null> {
+    return updateCalendarEvent(id, { status: 'upcoming' });
+  }
+
+  // ==================== Local Filters ====================
+
   function getEventsForMonth(year: number, month: number): CalendarEvent[] {
     return events.value.filter(e => {
       const d = new Date(e.eventDate);
@@ -63,7 +159,6 @@ export const useCalendarStore = defineStore('calendar', () => {
     });
   }
 
-  // Events on a specific date
   function getEventsForDate(dateStr: string): CalendarEvent[] {
     const target = new Date(dateStr);
     target.setHours(0, 0, 0, 0);
@@ -74,7 +169,6 @@ export const useCalendarStore = defineStore('calendar', () => {
     });
   }
 
-  // Events upcoming within N days
   function getEventsWithinDays(days: number): CalendarEvent[] {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -88,63 +182,12 @@ export const useCalendarStore = defineStore('calendar', () => {
       .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
   }
 
-  // Reminders due (events within reminder window)
-  const activeReminders = computed(() => {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    return events.value.filter(e => {
-      if (!e.reminderEnabled || e.status === 'completed' || e.status === 'cancelled') return false;
-      const eventDate = new Date(e.eventDate);
-      eventDate.setHours(0, 0, 0, 0);
-      const reminderDate = new Date(eventDate.getTime() - (e.reminderDaysBefore) * 24 * 60 * 60 * 1000);
-      return reminderDate <= now && eventDate >= now;
-    });
-  });
+  // ==================== Helpers ====================
 
-  // Category breakdown
-  const eventsByCategory = computed(() => {
-    const map: Record<string, CalendarEvent[]> = {};
-    events.value.forEach(e => {
-      if (!map[e.category]) map[e.category] = [];
-      map[e.category].push(e);
-    });
-    return map;
-  });
+  function getEventById(id: string): CalendarEvent | undefined {
+    return events.value.find(e => e.id === id);
+  }
 
-  const categoryCounts = computed(() => {
-    const map = {} as Record<string, number>;
-    events.value.forEach(e => {
-      map[e.category] = (map[e.category] || 0) + 1;
-    });
-    return map;
-  });
-
-  // Total outflow this month (bills, EMI, insurance, etc.)
-  const outflowThisMonth = computed(() => {
-    return eventsThisMonth.value
-      .filter(e => {
-        const incomeCategories = ['salary', 'rental_income', 'dividend'];
-        return !incomeCategories.includes(e.category) && e.amount && e.status !== 'cancelled';
-      })
-      .reduce((sum, e) => sum + (e.amount || 0), 0);
-  });
-
-  // Total inflow this month
-  const inflowThisMonth = computed(() => {
-    return eventsThisMonth.value
-      .filter(e => {
-        const incomeCategories = ['salary', 'rental_income', 'dividend'];
-        return incomeCategories.includes(e.category) && e.amount && e.status !== 'cancelled';
-      })
-      .reduce((sum, e) => sum + (e.amount || 0), 0);
-  });
-
-  // High priority upcoming
-  const highPriorityUpcoming = computed(() =>
-    upcomingEvents.value.filter(e => e.priority === 'high')
-  );
-
-  // Search
   function searchEvents(query: string): CalendarEvent[] {
     const q = query.toLowerCase().trim();
     if (!q) return events.value;
@@ -156,98 +199,45 @@ export const useCalendarStore = defineStore('calendar', () => {
     );
   }
 
-  // Filter by category
   function getByCategory(category: CalendarEventCategory): CalendarEvent[] {
     return events.value.filter(e => e.category === category);
   }
 
-  // ==================== CRUD ====================
-
-  function addEvent(data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) {
-    const now = new Date().toISOString();
-    const event: CalendarEvent = {
-      ...data,
-      tags: data.tags || [],
-      id: generateId('cal'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    events.value.push(event);
-    return event;
-  }
-
-  function updateEvent(id: string, data: Partial<CalendarEvent>) {
-    const index = events.value.findIndex(e => e.id === id);
-    if (index === -1) return null;
-    events.value[index] = {
-      ...events.value[index],
-      ...data,
-      id: events.value[index].id,
-      createdAt: events.value[index].createdAt,
-      tags: data.tags ?? events.value[index].tags,
-      updatedAt: new Date().toISOString(),
-    };
-    return events.value[index];
-  }
-
-  function deleteEvent(id: string) {
-    const index = events.value.findIndex(e => e.id === id);
-    if (index !== -1) events.value.splice(index, 1);
-  }
-
-  function completeEvent(id: string) {
-    const ev = events.value.find(e => e.id === id);
-    if (ev) {
-      ev.status = 'completed';
-      ev.updatedAt = new Date().toISOString();
-    }
-  }
-
-  function cancelEvent(id: string) {
-    const ev = events.value.find(e => e.id === id);
-    if (ev) {
-      ev.status = 'cancelled';
-      ev.updatedAt = new Date().toISOString();
-    }
-  }
-
-  function markAsUpcoming(id: string) {
-    const ev = events.value.find(e => e.id === id);
-    if (ev) {
-      ev.status = 'upcoming';
-      ev.updatedAt = new Date().toISOString();
-    }
-  }
-
-  function getEventById(id: string): CalendarEvent | undefined {
-    return events.value.find(e => e.id === id);
+  function clearError() {
+    error.value = null;
   }
 
   return {
+    // State
     events,
+    loading,
+    error,
+    // Fetchers
+    fetchEvents,
+    fetchEventById,
+    // Computed
     totalEvents,
     recurringEvents,
     upcomingEvents,
     overdueEvents,
     completedEvents,
     eventsThisMonth,
-    activeReminders,
-    eventsByCategory,
-    categoryCounts,
-    outflowThisMonth,
-    inflowThisMonth,
-    highPriorityUpcoming,
-    getEventsForMonth,
-    getEventsForDate,
-    getEventsWithinDays,
-    searchEvents,
-    getByCategory,
+    // CRUD
     addEvent,
-    updateEvent,
+    updateCalendarEvent,
     deleteEvent,
+    // Status helpers
     completeEvent,
     cancelEvent,
     markAsUpcoming,
+    // Local filters
+    getEventsForMonth,
+    getEventsForDate,
+    getEventsWithinDays,
+    // Helpers
     getEventById,
+    searchEvents,
+    getByCategory,
+    clearError,
   };
 });

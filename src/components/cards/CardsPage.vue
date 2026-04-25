@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useCardStore } from '../../stores/card';
 import { useBankStore } from '../../stores/bank';
 import { useCurrencyStore } from '../../stores/currency';
@@ -12,11 +12,25 @@ const bankStore = useBankStore();
 const currencyStore = useCurrencyStore();
 const currencyList = currencyStore.currencyList;
 
+// ==================== Data Fetching ====================
+onMounted(async () => {
+  try {
+    await Promise.all([
+      cardStore.fetchCards(),
+      bankStore.fetchAccounts(),
+    ]);
+  } catch (err) {
+    console.error('Failed to load card page data:', err);
+  }
+});
+
 // ==================== State ====================
 const selectedCardId = ref<string | null>(null);
 const showAddCardModal = ref(false);
+const showEditCardModal = ref(false);
 const showUpdateBalanceModal = ref(false);
 const showRecordPaymentModal = ref(false);
+const showDeleteConfirm = ref(false);
 
 const balanceForm = ref({ amount: 0 });
 const paymentForm = ref({ amount: 0, date: new Date().toISOString().split('T')[0] });
@@ -44,19 +58,15 @@ const selectedCardBank = computed(() => {
   return bankStore.bankAccounts.find(a => a.id === selectedCard.value!.bankAccountId) || null;
 });
 
-// ==================== Card Transactions (from bank store, filtered by cardId on expense transactions) ====================
-// Note: Expenses in the bank transaction model don't have cardId directly,
-// but we can show the linked bank account's transactions
+// ==================== Card Transactions (from bank store) ====================
 const selectedCardTransactions = computed(() => {
   if (!selectedCard.value) return [];
-  // Show transactions from the linked bank account
   return bankStore.getAccountTransactions(selectedCard.value.bankAccountId).slice(0, 10);
 });
 
 const monthlySpending = computed(() => {
   if (!selectedCard.value) return 0;
   const now = new Date();
-  const currencyStore = useCurrencyStore();
   return bankStore.transactions
     .filter(t => {
       const d = new Date(t.date);
@@ -67,6 +77,11 @@ const monthlySpending = computed(() => {
     })
     .reduce((sum, t) => sum + currencyStore.convertToBase(t.amount, t.currency || 'BDT'), 0);
 });
+
+// ==================== Toggle Card Selection ====================
+function toggleCardSelection(cardId: string) {
+  selectedCardId.value = selectedCardId.value === cardId ? null : cardId;
+}
 
 // ==================== Card Gradient ====================
 function cardGradient(color: string): string {
@@ -96,31 +111,58 @@ function getAvailableCredit(card: any): number {
   return card.creditLimit - card.currentBalance;
 }
 
+// ==================== Update Balance ====================
 function openUpdateBalance(card: any) {
   selectedCardId.value = card.id;
   balanceForm.value.amount = card.currentBalance;
   showUpdateBalanceModal.value = true;
 }
 
-function submitUpdateBalance() {
+async function submitUpdateBalance() {
   if (!selectedCardId.value) return;
-  cardStore.updateCard(selectedCardId.value, { currentBalance: balanceForm.value.amount } as any);
-  showUpdateBalanceModal.value = false;
+  try {
+    await cardStore.updateCard(selectedCardId.value, { currentBalance: balanceForm.value.amount } as any);
+    showUpdateBalanceModal.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to update balance.');
+  }
 }
 
+// ==================== Record Payment ====================
 function openRecordPayment(card: any) {
   selectedCardId.value = card.id;
   paymentForm.value = { amount: card.currentBalance * 0.05, date: new Date().toISOString().split('T')[0] };
   showRecordPaymentModal.value = true;
 }
 
-function submitCardPayment() {
+async function submitCardPayment() {
   if (!selectedCardId.value) return;
-  const card = cardStore.getCardById(selectedCardId.value);
-  if (!card) return;
-  const newBalance = Math.max(0, card.currentBalance - paymentForm.value.amount);
-  cardStore.updateCard(selectedCardId.value, { currentBalance: newBalance } as any);
-  showRecordPaymentModal.value = false;
+  try {
+    const card = cardStore.getCardById(selectedCardId.value);
+    if (!card) return;
+    const newBalance = Math.max(0, card.currentBalance - paymentForm.value.amount);
+    await cardStore.updateCard(selectedCardId.value, { currentBalance: newBalance } as any);
+    showRecordPaymentModal.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to record payment.');
+  }
+}
+
+// ==================== Delete Card ====================
+function openDeleteConfirm(card: any) {
+  selectedCardId.value = card.id;
+  showDeleteConfirm.value = true;
+}
+
+async function confirmDeleteCard() {
+  if (!selectedCardId.value) return;
+  try {
+    await cardStore.deleteCard(selectedCardId.value);
+    selectedCardId.value = null;
+    showDeleteConfirm.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to delete card.');
+  }
 }
 
 // ==================== Add Card Form ====================
@@ -160,35 +202,104 @@ function resetCardForm() {
   };
 }
 
-function handleSaveCard() {
-  if (!cardForm.value.name || !cardForm.value.cardNumber || !cardForm.value.holderName || !cardForm.value.expiryDate) return;
-
-  cardStore.addCard({
-    bankAccountId: cardForm.value.bankAccountId || bankStore.bankAccounts[0]?.id || '',
-    name: cardForm.value.name,
-    type: cardForm.value.type,
-    cardNumber: cardForm.value.cardNumber,
-    holderName: cardForm.value.holderName,
-    expiryDate: cardForm.value.expiryDate,
-    brand: cardForm.value.brand,
-    creditLimit: cardForm.value.type === 'credit' ? (parseFloat(cardForm.value.creditLimit) || 0) : undefined,
-    currentBalance: 0,
-    billingCycle: {
-      start: cardForm.value.billingCycleStart,
-      end: cardForm.value.billingCycleEnd,
-    },
-    dueDate: cardForm.value.type === 'credit' ? cardForm.value.dueDate : 0,
-    isActive: true,
-    color: cardForm.value.color,
-    currency: cardForm.value.currency,
-    secondaryCurrency: cardForm.value.secondaryCurrency || undefined,
-  });
-
-  showAddCardModal.value = false;
-  resetCardForm();
+function populateCardFormFrom(card: any) {
+  const cycle = card.billingCycle || {};
+  cardForm.value = {
+    name: card.name || '',
+    type: card.type || 'credit',
+    bankAccountId: card.bankAccountId || '',
+    cardNumber: card.cardNumber || '',
+    holderName: card.holderName || '',
+    expiryDate: card.expiryDate || '',
+    brand: card.brand || 'visa',
+    creditLimit: card.creditLimit != null ? String(card.creditLimit) : '',
+    billingCycleStart: Number(cycle.start) || 1,
+    billingCycleEnd: Number(cycle.end) || 30,
+    dueDate: card.dueDate || 15,
+    color: card.color || '#7c3aed',
+    currency: (card.currency || 'BDT') as Currency,
+    secondaryCurrency: card.secondaryCurrency || '',
+  };
 }
 
-// ==================== Credit Card Color for Utilization ====================
+// ==================== Add Card ====================
+async function handleSaveCard() {
+  if (!cardForm.value.name) { alert('Card name is required.'); return; }
+  if (!cardForm.value.cardNumber) { alert('Card number is required.'); return; }
+  if (!cardForm.value.holderName) { alert('Card holder name is required.'); return; }
+  if (!cardForm.value.expiryDate) { alert('Expiry date is required.'); return; }
+
+  try {
+    await cardStore.addCard({
+      bankAccountId: cardForm.value.bankAccountId || bankStore.bankAccounts[0]?.id || '',
+      name: cardForm.value.name,
+      type: cardForm.value.type,
+      cardNumber: cardForm.value.cardNumber,
+      holderName: cardForm.value.holderName,
+      expiryDate: cardForm.value.expiryDate,
+      brand: cardForm.value.brand,
+      creditLimit: cardForm.value.type === 'credit' ? (parseFloat(cardForm.value.creditLimit) || 0) : undefined,
+      currentBalance: 0,
+      billingCycle: {
+        start: cardForm.value.billingCycleStart,
+        end: cardForm.value.billingCycleEnd,
+      },
+      dueDate: cardForm.value.type === 'credit' ? cardForm.value.dueDate : 0,
+      isActive: true,
+      color: cardForm.value.color,
+      currency: cardForm.value.currency,
+      secondaryCurrency: cardForm.value.secondaryCurrency || undefined,
+    });
+
+    showAddCardModal.value = false;
+    resetCardForm();
+  } catch (err: any) {
+    alert(err?.message || 'Failed to create card.');
+  }
+}
+
+// ==================== Edit Card ====================
+function openEditCard(card: any) {
+  selectedCardId.value = card.id;
+  populateCardFormFrom(card);
+  showEditCardModal.value = true;
+}
+
+async function handleEditCard() {
+  if (!selectedCardId.value) return;
+  if (!cardForm.value.name) { alert('Card name is required.'); return; }
+  if (!cardForm.value.cardNumber) { alert('Card number is required.'); return; }
+  if (!cardForm.value.holderName) { alert('Card holder name is required.'); return; }
+  if (!cardForm.value.expiryDate) { alert('Expiry date is required.'); return; }
+
+  try {
+    await cardStore.updateCard(selectedCardId.value, {
+      bankAccountId: cardForm.value.bankAccountId || bankStore.bankAccounts[0]?.id || '',
+      name: cardForm.value.name,
+      type: cardForm.value.type,
+      cardNumber: cardForm.value.cardNumber,
+      holderName: cardForm.value.holderName,
+      expiryDate: cardForm.value.expiryDate,
+      brand: cardForm.value.brand,
+      creditLimit: cardForm.value.type === 'credit' ? (parseFloat(cardForm.value.creditLimit) || 0) : undefined,
+      billingCycle: {
+        start: cardForm.value.billingCycleStart,
+        end: cardForm.value.billingCycleEnd,
+      },
+      dueDate: cardForm.value.type === 'credit' ? cardForm.value.dueDate : 0,
+      isActive: true,
+      color: cardForm.value.color,
+      currency: cardForm.value.currency,
+      secondaryCurrency: cardForm.value.secondaryCurrency || undefined,
+    } as any);
+
+    showEditCardModal.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to update card.');
+  }
+}
+
+// ==================== Utilization Color Helper ====================
 function cardUtilColor(balance: number, limit: number): string {
   if (!limit) return 'bg-accent-500';
   const pct = (balance / limit) * 100;
@@ -211,41 +322,21 @@ function cardUtilColor(balance: number, limit: number): string {
 
     <!-- Summary Stats -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <StatCard
-        title="Total Credit Limit"
-        :value="formatCurrency(totalCreditLimit)"
-        icon="💳"
-        color="primary"
-      />
-      <StatCard
-        title="Total Credit Used"
-        :value="formatCurrency(totalCreditUsed)"
-        icon="📊"
-        color="warning"
-      />
+      <StatCard title="Total Credit Limit" :value="formatCurrency(totalCreditLimit)" icon="💳" color="primary" />
+      <StatCard title="Total Credit Used" :value="formatCurrency(totalCreditUsed)" icon="📊" color="warning" />
       <StatCard
         title="Credit Utilization"
         :value="`${creditUtilization.toFixed(1)}%`"
         :icon="creditUtilization < 30 ? '✅' : creditUtilization < 70 ? '⚠️' : '🔴'"
         :color="utilizationColor"
       />
-      <StatCard
-        title="Active Cards"
-        :value="String(activeCardsCount)"
-        icon="🏦"
-        color="info"
-      />
+      <StatCard title="Active Cards" :value="String(activeCardsCount)" icon="🏦" color="info" />
     </div>
 
     <!-- Credit Utilization Bar -->
     <div class="card p-4">
       <p class="text-sm font-medium text-surface-700 dark:text-surface-300 mb-2">Overall Credit Utilization</p>
-      <ProgressBar
-        :value="totalCreditUsed"
-        :max="totalCreditLimit || 1"
-        :color="utilizationColor"
-        :show-label="true"
-      />
+      <ProgressBar :value="totalCreditUsed" :max="totalCreditLimit || 1" :color="utilizationColor" :show-label="true" />
       <p class="text-xs mt-1.5" :class="creditUtilization < 30 ? 'text-accent-600 dark:text-accent-400' : creditUtilization < 70 ? 'text-amber-600 dark:text-amber-400' : 'text-danger-500 dark:text-danger-400'">
         {{ creditUtilization < 30 ? 'Great! Your credit utilization is healthy.' : creditUtilization < 70 ? 'Moderate utilization. Try to keep it below 30%.' : 'High utilization! Consider paying down your balance.' }}
       </p>
@@ -257,9 +348,7 @@ function cardUtilColor(balance: number, limit: number): string {
         <div class="text-4xl mb-3">💳</div>
         <h3 class="text-lg font-semibold text-surface-700 dark:text-surface-300">No cards added</h3>
         <p class="text-sm text-surface-500 dark:text-surface-400 mt-1">Add your first credit or debit card</p>
-        <button @click="resetCardForm(); showAddCardModal = true" class="btn-primary mt-4">
-          <span>+ Add Card</span>
-        </button>
+        <button @click="resetCardForm(); showAddCardModal = true" class="btn-primary mt-4"><span>+ Add Card</span></button>
       </div>
     </div>
 
@@ -267,17 +356,24 @@ function cardUtilColor(balance: number, limit: number): string {
       <!-- Visual Cards Grid -->
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
         <div
-          v-for="card in cardStore.cards.filter(c => c.isActive)"
+          v-for="card in cardStore.cards"
           :key="card.id"
-          @click="selectedCardId = selectedCardId === card.id ? null : card.id"
+          @click="toggleCardSelection(card.id)"
           class="cursor-pointer group"
         >
           <!-- Credit Card Visual -->
           <div
             class="relative rounded-2xl p-6 text-white shadow-lg transition-all duration-300 group-hover:shadow-xl group-hover:-translate-y-1"
-            :class="{ 'ring-2 ring-white/50 ring-offset-2 ring-offset-surface-100 dark:ring-offset-surface-900': selectedCardId === card.id }"
+            :class="{
+              'ring-2 ring-white/50 ring-offset-2 ring-offset-surface-100 dark:ring-offset-surface-900': selectedCardId === card.id,
+              'opacity-60': !card.isActive,
+            }"
             :style="{ background: cardGradient(card.color || '#7c3aed'), aspectRatio: '1.586 / 1' }"
           >
+            <!-- Inactive badge -->
+            <div v-if="!card.isActive" class="absolute top-3 right-3 z-20">
+              <Badge variant="neutral" size="sm">Inactive</Badge>
+            </div>
             <!-- Decorative circles -->
             <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
             <div class="absolute bottom-0 left-0 w-24 h-24 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2" />
@@ -287,7 +383,11 @@ function cardUtilColor(balance: number, limit: number): string {
               <!-- Top row: Name + Brand -->
               <div class="flex items-start justify-between">
                 <div>
-                  <p class="text-xs font-medium text-white/70 uppercase tracking-wider">{{ card.type === 'credit' ? 'Credit Card' : 'Debit Card' }}<span v-if="card.currency && card.currency !== 'BDT'" class="text-[10px] font-medium px-1.5 py-0.5 bg-white/20 rounded ml-2">{{ card.currency }}</span><span v-if="card.secondaryCurrency" class="text-[10px] font-medium px-1.5 py-0.5 bg-white/20 rounded">{{ card.secondaryCurrency }}</span></p>
+                  <p class="text-xs font-medium text-white/70 uppercase tracking-wider">
+                    {{ card.type === 'credit' ? 'Credit Card' : 'Debit Card' }}
+                    <span v-if="card.currency && card.currency !== 'BDT'" class="text-[10px] font-medium px-1.5 py-0.5 bg-white/20 rounded ml-2">{{ card.currency }}</span>
+                    <span v-if="card.secondaryCurrency" class="text-[10px] font-medium px-1.5 py-0.5 bg-white/20 rounded">{{ card.secondaryCurrency }}</span>
+                  </p>
                   <p class="text-sm font-semibold mt-0.5">{{ card.name }}</p>
                 </div>
                 <span class="text-lg font-bold tracking-wider opacity-90">{{ getBrandLogo(card.brand) }}</span>
@@ -321,7 +421,10 @@ function cardUtilColor(balance: number, limit: number): string {
                   {{ currencyStore.formatWithCurrency(card.currentBalance, card.currency || 'BDT') }} / {{ currencyStore.formatWithCurrency(card.creditLimit || 0, card.currency || 'BDT') }}
                 </p>
               </div>
-              <Badge :variant="((card.currentBalance / (card.creditLimit || 1)) * 100) < 30 ? 'success' : ((card.currentBalance / (card.creditLimit || 1)) * 100) < 70 ? 'warning' : 'danger'" size="sm">
+              <Badge
+                :variant="((card.currentBalance / (card.creditLimit || 1)) * 100) < 30 ? 'success' : ((card.currentBalance / (card.creditLimit || 1)) * 100) < 70 ? 'warning' : 'danger'"
+                size="sm"
+              >
                 {{ ((card.currentBalance / (card.creditLimit || 1)) * 100).toFixed(0) }}% used
               </Badge>
             </div>
@@ -431,16 +534,16 @@ function cardUtilColor(balance: number, limit: number): string {
                   <p class="text-xs text-surface-400">Dual-currency card. Transactions in {{ selectedCard.secondaryCurrency }} are converted automatically.</p>
                 </div>
 
-                <!-- Billing Cycle -->
+                <!-- Billing Cycle (credit only) -->
                 <div v-if="selectedCard.type === 'credit'" class="pt-3 border-t border-surface-200 dark:border-surface-700 space-y-2">
                   <h4 class="text-sm font-medium text-surface-700 dark:text-surface-300">Billing Cycle</h4>
                   <div class="flex justify-between">
                     <span class="text-sm text-surface-500 dark:text-surface-400">Cycle</span>
-                    <span class="text-sm text-surface-700 dark:text-surface-300">{{ selectedCard.billingCycle.start }}th — {{ selectedCard.billingCycle.end }}th</span>
+                    <span class="text-sm text-surface-700 dark:text-surface-300">{{ selectedCard.billingCycle?.start || 1 }}th — {{ selectedCard.billingCycle?.end || 30 }}th</span>
                   </div>
                   <div class="flex justify-between">
                     <span class="text-sm text-surface-500 dark:text-surface-400">Payment Due</span>
-                    <span class="text-sm font-medium text-danger-500 dark:text-danger-400">{{ selectedCard.dueDate }}th of month</span>
+                    <span class="text-sm font-medium text-danger-500 dark:text-danger-400">{{ selectedCard.dueDate || 1 }}th of month</span>
                   </div>
                 </div>
 
@@ -452,13 +555,19 @@ function cardUtilColor(balance: number, limit: number): string {
                   </Badge>
                 </div>
 
-                <!-- Action Buttons -->
-                <div v-if="selectedCard.type === 'credit'" class="pt-3 border-t border-surface-200 dark:border-surface-700 space-y-2">
-                  <button @click="openUpdateBalance(selectedCard)" class="btn-secondary w-full text-sm justify-center">
-                    ✏️ Update Balance
+                <!-- Action Buttons — available for ALL card types -->
+                <div class="pt-3 border-t border-surface-200 dark:border-surface-700 space-y-2">
+                  <button @click="openEditCard(selectedCard)" class="btn-secondary w-full text-sm justify-center">
+                    ✏️ Edit Card
                   </button>
-                  <button @click="openRecordPayment(selectedCard)" class="btn-primary w-full text-sm justify-center">
+                  <button v-if="selectedCard.type === 'credit'" @click="openUpdateBalance(selectedCard)" class="btn-secondary w-full text-sm justify-center">
+                    💰 Update Balance
+                  </button>
+                  <button v-if="selectedCard.type === 'credit'" @click="openRecordPayment(selectedCard)" class="btn-primary w-full text-sm justify-center">
                     💳 Record Payment
+                  </button>
+                  <button @click="openDeleteConfirm(selectedCard)" class="btn-secondary w-full text-sm justify-center text-danger-500 hover:text-danger-600 hover:border-danger-300 dark:hover:border-danger-500">
+                    🗑️ Delete Card
                   </button>
                 </div>
               </div>
@@ -534,12 +643,7 @@ function cardUtilColor(balance: number, limit: number): string {
     </div>
 
     <!-- ==================== Add Card Modal ==================== -->
-    <Modal
-      :is-open="showAddCardModal"
-      title="Add Card"
-      size="lg"
-      @close="showAddCardModal = false"
-    >
+    <Modal :is-open="showAddCardModal" title="Add Card" size="lg" @close="showAddCardModal = false">
       <form @submit.prevent="handleSaveCard" class="space-y-4">
         <!-- Card Name & Type -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -643,7 +747,6 @@ function cardUtilColor(balance: number, limit: number): string {
           <div class="flex items-center gap-3">
             <input v-model="cardForm.color" type="color" class="w-10 h-10 rounded-lg border border-surface-300 dark:border-surface-600 cursor-pointer" />
             <span class="text-sm text-surface-500 dark:text-surface-400 font-mono">{{ cardForm.color }}</span>
-            <!-- Preview mini card -->
             <div class="w-16 h-10 rounded-lg ml-2" :style="{ background: cardGradient(cardForm.color) }" />
           </div>
         </div>
@@ -651,26 +754,136 @@ function cardUtilColor(balance: number, limit: number): string {
         <!-- Actions -->
         <div class="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
           <button type="button" @click="showAddCardModal = false" class="btn-secondary">Cancel</button>
-          <button type="submit" class="btn-primary">
-            <span>Add Card</span>
-          </button>
+          <button type="submit" class="btn-primary"><span>Add Card</span></button>
+        </div>
+      </form>
+    </Modal>
+
+    <!-- ==================== Edit Card Modal ==================== -->
+    <Modal :is-open="showEditCardModal" title="Edit Card" size="lg" @close="showEditCardModal = false">
+      <form @submit.prevent="handleEditCard" class="space-y-4">
+        <!-- Card Name & Type -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Card Name <span class="text-danger-500">*</span></label>
+            <input v-model="cardForm.name" type="text" placeholder="e.g., City Bank Visa Credit Card" class="input-field" />
+          </div>
+          <div>
+            <label class="field-label">Card Type <span class="text-danger-500">*</span></label>
+            <select v-model="cardForm.type" class="input-field">
+              <option value="credit">Credit Card</option>
+              <option value="debit">Debit Card</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Linked Account & Card Number -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Linked Bank Account</label>
+            <select v-model="cardForm.bankAccountId" class="input-field">
+              <option value="">Select Account</option>
+              <option v-for="acc in bankStore.bankAccounts" :key="acc.id" :value="acc.id">
+                {{ acc.bankName }} — {{ acc.accountNumber }}
+              </option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Card Number <span class="text-danger-500">*</span></label>
+            <input v-model="cardForm.cardNumber" type="text" placeholder="**** **** **** 1234" class="input-field" />
+          </div>
+        </div>
+
+        <!-- Currency -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Card Currency</label>
+            <select v-model="cardForm.currency" class="input-field">
+              <option v-for="c in currencyList" :key="c.currency" :value="c.currency">{{ c.flag }} {{ c.currency }} ({{ c.symbol }})</option>
+            </select>
+          </div>
+          <div v-if="cardForm.type === 'credit'">
+            <label class="field-label">Secondary Currency (optional)</label>
+            <select v-model="cardForm.secondaryCurrency" class="input-field">
+              <option value="">None</option>
+              <option v-for="c in currencyList.filter(x => x.currency !== cardForm.currency)" :key="c.currency" :value="c.currency">{{ c.flag }} {{ c.currency }} ({{ c.symbol }})</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Holder Name & Brand -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Card Holder Name <span class="text-danger-500">*</span></label>
+            <input v-model="cardForm.holderName" type="text" placeholder="Full name on card" class="input-field" />
+          </div>
+          <div>
+            <label class="field-label">Brand</label>
+            <select v-model="cardForm.brand" class="input-field">
+              <option value="visa">VISA</option>
+              <option value="mastercard">MASTERCARD</option>
+              <option value="amex">AMEX</option>
+              <option value="discover">DISCOVER</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Expiry Date & Credit Limit -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Expiry Date <span class="text-danger-500">*</span></label>
+            <input v-model="cardForm.expiryDate" type="text" placeholder="MM/YY" class="input-field" />
+          </div>
+          <div v-if="cardForm.type === 'credit'">
+            <label class="field-label">Credit Limit ({{ currencyStore.getSymbol(cardForm.currency) }})</label>
+            <input v-model="cardForm.creditLimit" type="number" min="0" step="1000" placeholder="e.g., 100000" class="input-field" />
+          </div>
+        </div>
+
+        <!-- Billing Cycle (credit only) -->
+        <template v-if="cardForm.type === 'credit'">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="field-label">Billing Cycle Start</label>
+              <input v-model.number="cardForm.billingCycleStart" type="number" min="1" max="31" class="input-field" />
+            </div>
+            <div>
+              <label class="field-label">Billing Cycle End</label>
+              <input v-model.number="cardForm.billingCycleEnd" type="number" min="1" max="31" class="input-field" />
+            </div>
+            <div>
+              <label class="field-label">Payment Due Day</label>
+              <input v-model.number="cardForm.dueDate" type="number" min="1" max="31" class="input-field" />
+            </div>
+          </div>
+        </template>
+
+        <!-- Color -->
+        <div>
+          <label class="field-label">Card Color</label>
+          <div class="flex items-center gap-3">
+            <input v-model="cardForm.color" type="color" class="w-10 h-10 rounded-lg border border-surface-300 dark:border-surface-600 cursor-pointer" />
+            <span class="text-sm text-surface-500 dark:text-surface-400 font-mono">{{ cardForm.color }}</span>
+            <div class="w-16 h-10 rounded-lg ml-2" :style="{ background: cardGradient(cardForm.color) }" />
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
+          <button type="button" @click="showEditCardModal = false" class="btn-secondary">Cancel</button>
+          <button type="submit" class="btn-primary"><span>Save Changes</span></button>
         </div>
       </form>
     </Modal>
 
     <!-- ==================== Update Balance Modal ==================== -->
-    <Modal
-      :is-open="showUpdateBalanceModal"
-      title="Update Card Balance"
-      size="sm"
-      @close="showUpdateBalanceModal = false"
-    >
+    <Modal :is-open="showUpdateBalanceModal" title="Update Card Balance" size="sm" @close="showUpdateBalanceModal = false">
       <div class="space-y-4">
         <p class="text-sm text-surface-500 dark:text-surface-400">
           Set the current outstanding balance on this credit card.
         </p>
         <div>
-          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Current Balance ({{ selectedCard.currency || 'BDT' }})</label>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Current Balance ({{ selectedCard?.currency || 'BDT' }})</label>
           <input v-model.number="balanceForm.amount" type="number" min="0" step="100" class="input-field tabular-nums" placeholder="0" />
         </div>
         <div class="flex justify-end gap-3 pt-2">
@@ -681,19 +894,14 @@ function cardUtilColor(balance: number, limit: number): string {
     </Modal>
 
     <!-- ==================== Record Payment Modal ==================== -->
-    <Modal
-      :is-open="showRecordPaymentModal"
-      title="Record Card Payment"
-      size="sm"
-      @close="showRecordPaymentModal = false"
-    >
+    <Modal :is-open="showRecordPaymentModal" title="Record Card Payment" size="sm" @close="showRecordPaymentModal = false">
       <div class="space-y-4">
         <div v-if="selectedCard" class="bg-surface-50 dark:bg-surface-700/50 rounded-lg p-3 flex items-center justify-between">
           <span class="text-sm text-surface-600 dark:text-surface-400">Current Balance</span>
           <span class="text-sm font-bold text-danger-500 tabular-nums">{{ currencyStore.formatWithCurrency(selectedCard.currentBalance, selectedCard.currency || 'BDT') }}</span>
         </div>
         <div>
-          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Payment Amount ({{ selectedCard.currency || 'BDT' }})</label>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Payment Amount ({{ selectedCard?.currency || 'BDT' }})</label>
           <input v-model.number="paymentForm.amount" type="number" min="0" step="100" class="input-field tabular-nums" placeholder="0" />
         </div>
         <div>
@@ -708,6 +916,22 @@ function cardUtilColor(balance: number, limit: number): string {
         <div class="flex justify-end gap-3 pt-2">
           <button class="btn-secondary" @click="showRecordPaymentModal = false">Cancel</button>
           <button class="btn-primary" @click="submitCardPayment">Record Payment</button>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- ==================== Delete Confirmation Modal ==================== -->
+    <Modal :is-open="showDeleteConfirm" title="Delete Card" size="sm" @close="showDeleteConfirm = false">
+      <div class="space-y-4">
+        <p class="text-sm text-surface-600 dark:text-surface-400">
+          Are you sure you want to delete <strong>{{ selectedCard?.name }}</strong>?
+          This action cannot be undone.
+        </p>
+        <div class="flex justify-end gap-3 pt-2">
+          <button class="btn-secondary" @click="showDeleteConfirm = false">Cancel</button>
+          <button class="btn-primary bg-danger-500 hover:bg-danger-600 text-white border-danger-500" @click="confirmDeleteCard">
+            Delete Card
+          </button>
         </div>
       </div>
     </Modal>

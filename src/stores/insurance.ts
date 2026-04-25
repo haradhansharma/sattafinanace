@@ -1,17 +1,21 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Insurance, InsuranceCategory, InsuranceStatus, InsurancePremiumPayment, InsuranceClaim, InsuranceClaimStatus } from '../types';
-import { mockInsurances } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type {
+  Insurance,
+  InsuranceCategory,
+  InsuranceStatus,
+  InsurancePremiumPayment,
+  InsuranceClaim,
+  InsuranceClaimStatus,
+  InsuranceBeneficiary,
+} from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
 
 export const useInsuranceStore = defineStore('insurance', () => {
-  const insurances = ref<Insurance[]>(mockInsurances.map(i => ({
-    ...i,
-    premiumPayments: i.premiumPayments.map(p => ({ ...p })),
-    claims: i.claims.map(c => ({ ...c })),
-    beneficiaries: i.beneficiaries.map(b => ({ ...b })),
-  })));
+  // ==================== State ====================
+  const insurances = ref<Insurance[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // ==================== Computed ====================
 
@@ -28,13 +32,19 @@ export const useInsuranceStore = defineStore('insurance', () => {
   );
 
   const totalAnnualPremium = computed(() =>
-    insurances.value.filter(i => i.status === 'active' || i.status === 'pending_renewal').reduce((sum, i) => {
-      const annual = i.premiumFrequency === 'monthly' ? i.premiumAmount * 12
-        : i.premiumFrequency === 'quarterly' ? i.premiumAmount * 4
-        : i.premiumFrequency === 'semiannually' ? i.premiumAmount * 2
-        : i.premiumAmount;
-      return sum + annual;
-    }, 0)
+    insurances.value
+      .filter(i => i.status === 'active' || i.status === 'pending_renewal')
+      .reduce((sum, i) => {
+        const annual =
+          i.premiumFrequency === 'monthly'
+            ? i.premiumAmount * 12
+            : i.premiumFrequency === 'quarterly'
+              ? i.premiumAmount * 4
+              : i.premiumFrequency === 'semiannually'
+                ? i.premiumAmount * 2
+                : i.premiumAmount;
+        return sum + annual;
+      }, 0)
   );
 
   const totalPremiumPaid = computed(() =>
@@ -46,7 +56,14 @@ export const useInsuranceStore = defineStore('insurance', () => {
   );
 
   const openClaimsCount = computed(() =>
-    insurances.value.reduce((sum, i) => sum + i.claims.filter(c => c.status === 'pending' || c.status === 'in_review').length, 0)
+    insurances.value.reduce(
+      (sum, i) =>
+        sum +
+        i.claims.filter(
+          c => c.status === 'pending' || c.status === 'in_review'
+        ).length,
+      0
+    )
   );
 
   const upcomingRenewals = computed(() => {
@@ -55,15 +72,24 @@ export const useInsuranceStore = defineStore('insurance', () => {
     return insurances.value.filter(i => {
       if (!i.nextPremiumDueDate) return false;
       const due = new Date(i.nextPremiumDueDate);
-      return due >= now && due <= thirtyDaysLater && (i.status === 'active' || i.status === 'pending_renewal');
+      return (
+        due >= now &&
+        due <= thirtyDaysLater &&
+        (i.status === 'active' || i.status === 'pending_renewal')
+      );
     });
   });
 
   // Category breakdowns
   const insurancesByCategory = computed(() => {
     const map: Record<InsuranceCategory, Insurance[]> = {
-      life: [], health: [], vehicle: [], property: [],
-      travel: [], critical_illness: [], other: [],
+      life: [],
+      health: [],
+      vehicle: [],
+      property: [],
+      travel: [],
+      critical_illness: [],
+      other: [],
     };
     insurances.value.forEach(i => {
       if (map[i.category]) map[i.category].push(i);
@@ -72,150 +98,308 @@ export const useInsuranceStore = defineStore('insurance', () => {
   });
 
   const categoryTotals = computed(() => {
-    const map = {} as Record<string, { count: number; coverage: number; annualPremium: number; paid: number }>;
+    const map = {} as Record<
+      string,
+      { count: number; coverage: number; annualPremium: number; paid: number }
+    >;
     insurances.value.forEach(i => {
-      if (!map[i.category]) map[i.category] = { count: 0, coverage: 0, annualPremium: 0, paid: 0 };
+      if (!map[i.category])
+        map[i.category] = { count: 0, coverage: 0, annualPremium: 0, paid: 0 };
       map[i.category].count += 1;
       map[i.category].coverage += i.coverageAmount;
-      const annual = i.premiumFrequency === 'monthly' ? i.premiumAmount * 12
-        : i.premiumFrequency === 'quarterly' ? i.premiumAmount * 4
-        : i.premiumFrequency === 'semiannually' ? i.premiumAmount * 2
-        : i.premiumAmount;
+      const annual =
+        i.premiumFrequency === 'monthly'
+          ? i.premiumAmount * 12
+          : i.premiumFrequency === 'quarterly'
+            ? i.premiumAmount * 4
+            : i.premiumFrequency === 'semiannually'
+              ? i.premiumAmount * 2
+              : i.premiumAmount;
       map[i.category].annualPremium += annual;
       map[i.category].paid += i.totalPremiumPaid;
     });
     return map;
   });
 
+  // ==================== Fetch / List ====================
+
+  async function fetchInsurances(params?: {
+    category?: InsuranceCategory;
+    status?: InsuranceStatus;
+  }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const query: Record<string, any> = {};
+      if (params?.category) query.category = params.category;
+      if (params?.status) query.status = params.status;
+      insurances.value = await fetchAllPages<Insurance>('/insurance/', {
+        params: query,
+      });
+    } catch (err: any) {
+      error.value = err.message || 'Failed to fetch insurances';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // ==================== Internal helpers ====================
+
+  async function fetchInsuranceById(id: string): Promise<Insurance> {
+    const result = await api.get<Insurance>(`/insurance/${id}/`);
+    // Update local state so computed values stay in sync
+    const idx = insurances.value.findIndex(i => i.id === id);
+    if (idx !== -1) {
+      insurances.value[idx] = result;
+    }
+    return result;
+  }
+
+  function replaceInList(insurance: Insurance): void {
+    const idx = insurances.value.findIndex(i => i.id === insurance.id);
+    if (idx !== -1) {
+      insurances.value[idx] = insurance;
+    }
+  }
+
   // ==================== CRUD ====================
 
-  function addInsurance(data: Omit<Insurance, 'id' | 'createdAt' | 'updatedAt' | 'premiumPayments' | 'claims' | 'totalPremiumPaid' | 'paidPremiumsCount' | 'totalClaimedAmount'>) {
-    const now = new Date().toISOString();
-    const ins: Insurance = {
-      ...data,
-      premiumPayments: [],
-      claims: [],
-      totalPremiumPaid: 0,
-      paidPremiumsCount: 0,
-      totalClaimedAmount: 0,
-      id: generateId('ins'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    insurances.value.push(ins);
-    return ins;
-  }
+  type InsuranceCreateData = Omit<
+    Insurance,
+    | 'id'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'premiumPayments'
+    | 'claims'
+    | 'beneficiaries'
+    | 'totalPremiumPaid'
+    | 'paidPremiumsCount'
+    | 'totalClaimedAmount'
+  >;
 
-  function updateInsurance(id: string, data: Partial<Insurance>) {
-    const index = insurances.value.findIndex(i => i.id === id);
-    if (index === -1) return null;
-    insurances.value[index] = {
-      ...insurances.value[index],
-      ...data,
-      id: insurances.value[index].id,
-      createdAt: insurances.value[index].createdAt,
-      premiumPayments: data.premiumPayments ?? insurances.value[index].premiumPayments,
-      claims: data.claims ?? insurances.value[index].claims,
-      beneficiaries: data.beneficiaries ?? insurances.value[index].beneficiaries,
-      updatedAt: new Date().toISOString(),
-    };
-    return insurances.value[index];
-  }
-
-  function deleteInsurance(id: string) {
-    const index = insurances.value.findIndex(i => i.id === id);
-    if (index !== -1) insurances.value.splice(index, 1);
-  }
-
-  function addPremiumPayment(insuranceId: string, payment: Omit<InsurancePremiumPayment, 'id' | 'createdAt' | 'updatedAt' | 'insuranceId'>) {
-    const ins = insurances.value.find(i => i.id === insuranceId);
-    if (!ins) return;
-
-    const now = new Date().toISOString();
-    const newPayment: InsurancePremiumPayment = {
-      ...payment,
-      insuranceId,
-      id: generateId('pp'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    ins.premiumPayments.push(newPayment);
-    ins.totalPremiumPaid += payment.amount;
-    ins.paidPremiumsCount += 1;
-    ins.updatedAt = now;
-
-    // Update next premium due date
-    if (ins.expiryDate) {
-      const nextDue = new Date(payment.paymentDate);
-      const freq = ins.premiumFrequency;
-      if (freq === 'monthly') nextDue.setMonth(nextDue.getMonth() + 1);
-      else if (freq === 'quarterly') nextDue.setMonth(nextDue.getMonth() + 3);
-      else if (freq === 'semiannually') nextDue.setMonth(nextDue.getMonth() + 6);
-      else if (freq === 'annually') nextDue.setFullYear(nextDue.getFullYear() + 1);
-      if (nextDue < new Date(ins.expiryDate)) {
-        ins.nextPremiumDueDate = nextDue.toISOString();
-      } else {
-        ins.nextPremiumDueDate = undefined;
-      }
+  async function addInsurance(data: InsuranceCreateData): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const created = await api.post<Insurance>('/insurance/', data);
+      insurances.value.push(created);
+      return created;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to create insurance';
+      throw err;
+    } finally {
+      loading.value = false;
     }
+  }
 
-    // Move from pending_renewal to active
-    if (ins.status === 'pending_renewal') {
-      ins.status = 'active';
+  async function updateInsurance(
+    id: string,
+    data: Partial<Insurance>
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const updated = await api.put<Insurance>(`/insurance/${id}/`, data);
+      replaceInList(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update insurance';
+      throw err;
+    } finally {
+      loading.value = false;
     }
-
-    return ins;
   }
 
-  function addClaim(insuranceId: string, claim: Omit<InsuranceClaim, 'id' | 'createdAt' | 'updatedAt' | 'insuranceId'>) {
-    const ins = insurances.value.find(i => i.id === insuranceId);
-    if (!ins) return;
-
-    const now = new Date().toISOString();
-    const newClaim: InsuranceClaim = {
-      ...claim,
-      insuranceId,
-      id: generateId('clm'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    ins.claims.push(newClaim);
-    ins.updatedAt = now;
-    return ins;
-  }
-
-  function updateClaimStatus(insuranceId: string, claimId: string, status: InsuranceClaimStatus, approvedAmount?: number, resolutionNote?: string) {
-    const ins = insurances.value.find(i => i.id === insuranceId);
-    if (!ins) return;
-    const claim = ins.claims.find(c => c.id === claimId);
-    if (!claim) return;
-
-    claim.status = status;
-    if (approvedAmount !== undefined) claim.approvedAmount = approvedAmount;
-    if (resolutionNote) claim.resolutionNote = resolutionNote;
-    if (status === 'paid' && claim.approvedAmount) {
-      ins.totalClaimedAmount += claim.approvedAmount;
+  async function deleteInsurance(id: string): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.delete(`/insurance/${id}/`);
+      const idx = insurances.value.findIndex(i => i.id === id);
+      if (idx !== -1) insurances.value.splice(idx, 1);
+    } catch (err: any) {
+      error.value = err.message || 'Failed to delete insurance';
+      throw err;
+    } finally {
+      loading.value = false;
     }
-    if (status === 'approved' || status === 'paid' || status === 'rejected') {
-      claim.resolutionDate = new Date().toISOString();
-    }
-    ins.updatedAt = new Date().toISOString();
-    return ins;
   }
 
-  function updateStatus(id: string, status: InsuranceStatus) {
-    const ins = insurances.value.find(i => i.id === id);
-    if (!ins) return;
-    ins.status = status;
-    ins.updatedAt = new Date().toISOString();
+  // ==================== Premium Payments ====================
+
+  async function addPremiumPayment(
+    insuranceId: string,
+    payment: Omit<
+      InsurancePremiumPayment,
+      'id' | 'createdAt' | 'updatedAt' | 'insuranceId'
+    >
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.post(
+        `/insurance/${insuranceId}/premium-payments/`,
+        payment
+      );
+      // Re-fetch insurance to get updated totals (backend auto-calculates)
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to add premium payment';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
   }
+
+  // ==================== Claims ====================
+
+  async function addClaim(
+    insuranceId: string,
+    claim: Omit<
+      InsuranceClaim,
+      'id' | 'createdAt' | 'updatedAt' | 'insuranceId'
+    >
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.post(`/insurance/${insuranceId}/claims/`, claim);
+      // Re-fetch insurance to get updated totals
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to add claim';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function updateClaimStatus(
+    insuranceId: string,
+    claimId: string,
+    status: InsuranceClaimStatus,
+    approvedAmount?: number,
+    resolutionNote?: string
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const payload: Record<string, any> = { status };
+      if (approvedAmount !== undefined) payload.approvedAmount = approvedAmount;
+      if (resolutionNote) payload.resolutionNote = resolutionNote;
+
+      await api.put(
+        `/insurance/${insuranceId}/claims/${claimId}/`,
+        payload
+      );
+      // Re-fetch insurance to get updated totalClaimedAmount
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update claim status';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // ==================== Status Update ====================
+
+  async function updateStatus(id: string, status: InsuranceStatus): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const updated = await api.put<Insurance>(`/insurance/${id}/`, { status });
+      replaceInList(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update insurance status';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // ==================== Lookup ====================
 
   function getInsuranceById(id: string): Insurance | undefined {
     return insurances.value.find(i => i.id === id);
   }
 
+  // ==================== Beneficiaries (bonus sub-resource) ====================
+
+  async function addBeneficiary(
+    insuranceId: string,
+    beneficiary: Omit<InsuranceBeneficiary, 'id'>
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.post(
+        `/insurance/${insuranceId}/beneficiaries/`,
+        beneficiary
+      );
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to add beneficiary';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function updateBeneficiary(
+    insuranceId: string,
+    benId: string,
+    data: Partial<InsuranceBeneficiary>
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.put(
+        `/insurance/${insuranceId}/beneficiaries/${benId}/`,
+        data
+      );
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update beneficiary';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function deleteBeneficiary(
+    insuranceId: string,
+    benId: string
+  ): Promise<Insurance> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.delete(
+        `/insurance/${insuranceId}/beneficiaries/${benId}/`
+      );
+      const refreshed = await fetchInsuranceById(insuranceId);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to delete beneficiary';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   return {
+    // State
     insurances,
+    loading,
+    error,
+    // Computed
     activeInsurances,
     pendingRenewals,
     totalCoverage,
@@ -226,13 +410,24 @@ export const useInsuranceStore = defineStore('insurance', () => {
     upcomingRenewals,
     insurancesByCategory,
     categoryTotals,
+    // Fetch
+    fetchInsurances,
+    // CRUD
     addInsurance,
     updateInsurance,
     deleteInsurance,
+    // Premium Payments
     addPremiumPayment,
+    // Claims
     addClaim,
     updateClaimStatus,
+    // Status
     updateStatus,
+    // Lookup
     getInsuranceById,
+    // Beneficiaries
+    addBeneficiary,
+    updateBeneficiary,
+    deleteBeneficiary,
   };
 });

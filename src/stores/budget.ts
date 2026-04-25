@@ -1,15 +1,22 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Budget } from '../types';
-import { mockBudgets } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type { Budget, BudgetCategory } from '../types';
+import { api, fetchAllPages, ApiError } from '../services/api-bridge';
+
+function getCurrentMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
 
 export const useBudgetStore = defineStore('budget', () => {
-  const budgets = ref<Budget[]>(mockBudgets.map(b => ({ ...b })));
+  // ==================== State ====================
+  const budgets = ref<Budget[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  // ==================== Computed ====================
 
   function getCurrentBudget(): Budget | undefined {
-    return budgets.value.find(b => b.month === '2026-04');
+    return budgets.value.find(b => b.month === getCurrentMonth());
   }
 
   function getBudgetByMonth(month: string): Budget | undefined {
@@ -50,42 +57,169 @@ export const useBudgetStore = defineStore('budget', () => {
     return current.categories.filter(c => c.isOverBudget);
   });
 
+  // ==================== Fetch Methods ====================
+
+  async function fetchBudgets(month?: string): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const params = month ? { month } : undefined;
+      const items = await fetchAllPages<Budget>('/budget/', { params });
+      budgets.value = items;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch budgets';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  /**
+   * Get current month budget. First checks local state; if not found, calls the API.
+   */
+  async function fetchCurrentBudget(): Promise<Budget | undefined> {
+    const local = getCurrentBudget();
+    if (local) return local;
+
+    loading.value = true;
+    error.value = null;
+    try {
+      const budget = await api.get<Budget>('/budget/current/');
+      // Upsert into local state
+      const idx = budgets.value.findIndex(b => b.id === budget.id);
+      if (idx !== -1) {
+        budgets.value[idx] = budget;
+      } else {
+        budgets.value.push(budget);
+      }
+      return budget;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch current budget';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchBudgetById(id: string): Promise<Budget> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const budget = await api.get<Budget>(`/budget/${id}/`);
+      const idx = budgets.value.findIndex(b => b.id === budget.id);
+      if (idx !== -1) {
+        budgets.value[idx] = budget;
+      } else {
+        budgets.value.push(budget);
+      }
+      return budget;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch budget';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   // ==================== CRUD ====================
 
-  function addBudget(data: Omit<Budget, 'id' | 'createdAt' | 'updatedAt'>) {
-    const now = new Date().toISOString();
-    const budget: Budget = {
-      ...data,
-      id: generateId('bgt'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    budgets.value.push(budget);
-    return budget;
+  async function addBudget(data: any): Promise<Budget> {
+    error.value = null;
+    try {
+      const budget = await api.post<Budget>('/budget/', data);
+      budgets.value.push(budget);
+      return budget;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create budget';
+      throw err;
+    }
   }
 
-  function updateBudget(id: string, data: Partial<Budget>) {
-    const index = budgets.value.findIndex(b => b.id === id);
-    if (index === -1) return null;
-    budgets.value[index] = {
-      ...budgets.value[index],
-      ...data,
-      id: budgets.value[index].id,
-      createdAt: budgets.value[index].createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-    return budgets.value[index];
+  async function updateBudget(id: string, data: Partial<Budget>): Promise<Budget | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<Budget>(`/budget/${id}/`, data);
+      const index = budgets.value.findIndex(b => b.id === id);
+      if (index !== -1) {
+        budgets.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update budget';
+      throw err;
+    }
   }
 
-  function deleteBudget(id: string) {
-    const index = budgets.value.findIndex(b => b.id === id);
-    if (index !== -1) {
-      budgets.value.splice(index, 1);
+  async function deleteBudget(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/budget/${id}/`);
+      const index = budgets.value.findIndex(b => b.id === id);
+      if (index !== -1) {
+        budgets.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete budget';
+      throw err;
+    }
+  }
+
+  // ==================== Category CRUD ====================
+
+  async function addCategory(budgetId: string, data: any): Promise<BudgetCategory> {
+    error.value = null;
+    try {
+      const category = await api.post<BudgetCategory>(`/budget/${budgetId}/categories/`, data);
+      const budget = budgets.value.find(b => b.id === budgetId);
+      if (budget) {
+        budget.categories.push(category);
+      }
+      return category;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to add budget category';
+      throw err;
+    }
+  }
+
+  async function updateCategory(budgetId: string, categoryId: string, data: Partial<BudgetCategory>): Promise<BudgetCategory | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<BudgetCategory>(`/budget/${budgetId}/categories/${categoryId}/`, data);
+      const budget = budgets.value.find(b => b.id === budgetId);
+      if (budget) {
+        const catIdx = budget.categories.findIndex(c => c.id === categoryId);
+        if (catIdx !== -1) {
+          budget.categories[catIdx] = updated;
+        }
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update budget category';
+      throw err;
+    }
+  }
+
+  async function deleteCategory(budgetId: string, categoryId: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/budget/${budgetId}/categories/${categoryId}/`);
+      const budget = budgets.value.find(b => b.id === budgetId);
+      if (budget) {
+        const catIdx = budget.categories.findIndex(c => c.id === categoryId);
+        if (catIdx !== -1) {
+          budget.categories.splice(catIdx, 1);
+        }
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete budget category';
+      throw err;
     }
   }
 
   return {
     budgets,
+    loading,
+    error,
     getCurrentBudget,
     getBudgetByMonth,
     getBudgetOverStatus,
@@ -94,8 +228,14 @@ export const useBudgetStore = defineStore('budget', () => {
     totalRemaining,
     isCurrentMonthOverBudget,
     overBudgetCategories,
+    fetchBudgets,
+    fetchCurrentBudget,
+    fetchBudgetById,
     addBudget,
     updateBudget,
     deleteBudget,
+    addCategory,
+    updateCategory,
+    deleteCategory,
   };
 });

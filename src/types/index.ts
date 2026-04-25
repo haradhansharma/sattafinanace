@@ -96,7 +96,7 @@ export interface IncomeSource extends BaseModel {
 export interface Expense extends BaseModel {
   amount: number;
   date: string;
-  bankAccountId: string;
+  bankAccountId?: string;
   cardId?: string;
   categoryId: string;             // References ExpenseCategory
   transactionId?: string;          // Links to bank Transaction record
@@ -113,6 +113,7 @@ export interface ExpenseCategory extends BaseModel {
   color: string;
   type: 'needs' | 'wants' | 'savings' | 'investments';
   budgetLimit?: number;
+  currency?: Currency;
 }
 
 // ==================== Cards ====================

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useBankStore } from '../../stores/bank';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { useCurrencyStore } from '../../stores/currency';
 import { useExpenseStore } from '../../stores/expense';
 import type { Currency } from '../../types';
 import { PageHeader, DataTable, Badge, Modal, SearchInput, EmptyState, Tabs, StatCard } from '../ui';
-import type { Transaction, Column } from '../../types';
+import type { Column } from '../ui/DataTable.vue';
+import type { Transaction } from '../../types';
 
 const bankStore = useBankStore();
 const currencyStore = useCurrencyStore();
@@ -69,7 +70,10 @@ const accountBalance = computed(() => {
 
 // ==================== Computed: Filtered Transactions ====================
 const filteredTransactions = computed(() => {
-  let txns = bankStore.getAccountTransactions(selectedAccountId.value || '');
+  // When no account selected ("All Accounts"), show all transactions
+  let txns = selectedAccountId.value
+    ? bankStore.getAccountTransactions(selectedAccountId.value)
+    : [...bankStore.transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   if (transactionTypeFilter.value !== 'all') {
     txns = txns.filter(t => t.type === transactionTypeFilter.value);
@@ -147,9 +151,21 @@ function resetTxnForm() {
   };
 }
 
-function handleSaveTransaction() {
+async function handleSaveTransaction() {
   const amount = parseFloat(txnForm.value.amount);
-  if (!amount || amount <= 0 || !txnForm.value.bankAccountId || !txnForm.value.categoryId || !txnForm.value.description) return;
+
+  // ── Validation with user feedback ──
+  const missing: string[] = [];
+  if (!amount || amount <= 0) missing.push('Amount');
+  if (!txnForm.value.bankAccountId) missing.push('Bank Account');
+  if (!txnForm.value.categoryId) missing.push('Category');
+  if (!txnForm.value.description.trim()) missing.push('Description');
+  if (txnForm.value.type === 'transfer' && !txnForm.value.toBankAccountId) missing.push('Transfer To Account');
+
+  if (missing.length > 0) {
+    alert(`Please fill in the required field(s): ${missing.join(', ')}`);
+    return;
+  }
 
   const tags = txnForm.value.tags
     .split(',')
@@ -158,7 +174,7 @@ function handleSaveTransaction() {
 
   const baseData = {
     amount,
-    date: new Date(txnForm.value.date).toISOString(),
+    date: txnForm.value.date, // Already YYYY-MM-DD from date input
     bankAccountId: txnForm.value.bankAccountId,
     categoryId: txnForm.value.categoryId,
     description: txnForm.value.description,
@@ -167,33 +183,37 @@ function handleSaveTransaction() {
     currency: txnForm.value.currency,
   };
 
-  if (txnForm.value.type === 'transfer' && txnForm.value.toBankAccountId) {
-    // Create debit from source
-    bankStore.addTransaction({
-      ...baseData,
-      type: 'transfer',
-      direction: 'debit',
-      toBankAccountId: txnForm.value.toBankAccountId,
-    });
-    // Create credit to destination
-    bankStore.addTransaction({
-      ...baseData,
-      bankAccountId: txnForm.value.toBankAccountId,
-      toBankAccountId: txnForm.value.bankAccountId,
-      type: 'transfer',
-      direction: 'credit',
-      description: `Transfer from ${bankStore.bankAccounts.find(a => a.id === txnForm.value.bankAccountId)?.bankName || 'Account'}`,
-    });
-  } else {
-    bankStore.addTransaction({
-      ...baseData,
-      type: txnForm.value.type,
-      direction: txnForm.value.type === 'income' ? 'credit' : 'debit',
-    });
-  }
+  try {
+    if (txnForm.value.type === 'transfer' && txnForm.value.toBankAccountId) {
+      // Create debit from source
+      await bankStore.addTransaction({
+        ...baseData,
+        type: 'transfer',
+        direction: 'debit',
+        toBankAccountId: txnForm.value.toBankAccountId,
+      });
+      // Create credit to destination
+      await bankStore.addTransaction({
+        ...baseData,
+        bankAccountId: txnForm.value.toBankAccountId,
+        toBankAccountId: txnForm.value.bankAccountId,
+        type: 'transfer',
+        direction: 'credit',
+        description: `Transfer from ${bankStore.bankAccounts.find(a => a.id === txnForm.value.bankAccountId)?.bankName || 'Account'}`,
+      });
+    } else {
+      await bankStore.addTransaction({
+        ...baseData,
+        type: txnForm.value.type,
+        direction: txnForm.value.type === 'income' ? 'credit' : 'debit',
+      });
+    }
 
-  showAddTransactionModal.value = false;
-  resetTxnForm();
+    showAddTransactionModal.value = false;
+    resetTxnForm();
+  } catch (err: any) {
+    alert(err?.message || 'Failed to save transaction');
+  }
 }
 
 // ==================== Add Account Form ====================
@@ -219,22 +239,34 @@ function resetAccountForm() {
   };
 }
 
-function handleSaveAccount() {
-  if (!accountForm.value.bankName || !accountForm.value.accountNumber || !accountForm.value.accountName) return;
+async function handleSaveAccount() {
+  const missing: string[] = [];
+  if (!accountForm.value.bankName.trim()) missing.push('Bank Name');
+  if (!accountForm.value.accountNumber.trim()) missing.push('Account Number');
+  if (!accountForm.value.accountName.trim()) missing.push('Account Name');
 
-  bankStore.addAccount({
-    bankName: accountForm.value.bankName,
-    accountNumber: accountForm.value.accountNumber,
-    accountName: accountForm.value.accountName,
-    type: accountForm.value.type,
-    openingBalance: parseFloat(accountForm.value.openingBalance) || 0,
-    isActive: true,
-    currency: accountForm.value.currency,
-    color: accountForm.value.color,
-  });
+  if (missing.length > 0) {
+    alert(`Please fill in the required field(s): ${missing.join(', ')}`);
+    return;
+  }
 
-  showAddAccountModal.value = false;
-  resetAccountForm();
+  try {
+    await bankStore.addAccount({
+      bankName: accountForm.value.bankName,
+      accountNumber: accountForm.value.accountNumber,
+      accountName: accountForm.value.accountName,
+      type: accountForm.value.type,
+      openingBalance: parseFloat(accountForm.value.openingBalance) || 0,
+      isActive: true,
+      currency: accountForm.value.currency,
+      color: accountForm.value.color,
+    });
+
+    showAddAccountModal.value = false;
+    resetAccountForm();
+  } catch (err: any) {
+    alert(err?.message || 'Failed to create bank account');
+  }
 }
 
 // ==================== Tabs ====================
@@ -251,6 +283,23 @@ const txnTypeTabs = [
   { key: 'expense', label: 'Expense' },
   { key: 'transfer', label: 'Transfer' },
 ];
+
+// ==================== Init ====================
+onMounted(async () => {
+  try {
+    await Promise.all([
+      bankStore.fetchAccounts(),
+      bankStore.fetchTransactions(),
+      expenseStore.fetchCategories(),
+    ]);
+    // Auto-select first account
+    if (bankStore.bankAccounts.length > 0 && !selectedAccountId.value) {
+      selectedAccountId.value = bankStore.bankAccounts[0].id;
+    }
+  } catch (err) {
+    console.error('Failed to load bank data:', err);
+  }
+});
 </script>
 
 <template>

@@ -1,3 +1,65 @@
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  IncomePage.vue — REFERENCE PATTERN FOR ALL MODULE PAGES
+  ═══════════════════════════════════════════════════════════════════════════
+
+  HOW DATA IS EXTRACTED AND MOUNTED TO THE PAGE:
+  ───────────────────────────────────────────────
+
+  1. STORE INITIALIZATION (line ~11-14)
+     - Pinia stores are imported and instantiated at the top of <script setup>.
+     - Each store holds its own reactive state (e.g., incomeStore.incomes,
+       incomeStore.incomeSources, incomeStore.incomeCategories).
+     - The currencyStore provides currency formatting & conversion utilities.
+
+  2. DATA FETCHING — onMounted (line ~bottom of script)
+     - On component mount, `onMounted()` fires `Promise.all([...])` to
+       fetch incomes, income sources, and income categories IN PARALLEL.
+     - Each fetch method (e.g., incomeStore.fetchIncomes()) calls the
+       backend API (GET /api/income/), parses the JSON response, and
+       assigns the array to the store's reactive state.
+     - Because the store state is reactive (Pinia), any template that
+       references it automatically re-renders when the data arrives.
+
+  3. REACTIVE BINDING TO TEMPLATE
+     - Computed properties (e.g., filteredIncomes, incomeSourceOptions)
+       derive data from store state and auto-update when store changes.
+     - DataTable receives `:data="filteredIncomes"` — this is the reactive
+       computed list that re-computes whenever incomeStore.incomes changes.
+     - Named slots (#cell-date, #cell-source, etc.) format raw data using
+       helper functions (formatDate, getSourceName, formatCurrency, etc.).
+     - StatCards bind to computed values (thisMonthIncome, averageMonthlyIncome)
+       which aggregate from incomeStore.incomes.
+
+  4. CRUD OPERATIONS
+     - CREATE: Form collects user input → store method (addIncome/addSource)
+       calls POST API → on success, new item is pushed into store state
+       → reactive update triggers template re-render automatically.
+     - READ: Fetched on mount via store fetch methods.
+     - UPDATE: Form pre-filled with existing data → store update method
+       calls PUT API → store updates local state → template reflects change.
+     - DELETE: Confirmation dialog → store delete method calls DELETE API
+       → item removed from store state → template re-renders without it.
+
+  5. HELPER FUNCTIONS
+     - getSourceName(sourceId): Looks up source name from
+       incomeStore.incomeSources by ID. Used in DataTable cell template.
+     - getBankName(accountId): Looks up bank account from bankStore.bankAccounts.
+       Returns 'Cash / Other' if no accountId.
+     - getSourceType(type): Maps type enum to display label with icon.
+
+  6. KEY PATTERN TO FOLLOW FOR OTHER MODULES:
+     a) Import and instantiate stores at top
+     b) Define form state with empty defaults
+     c) Fetch all needed data in onMounted with Promise.all
+     d) Use computed properties for derived/filtered data
+     e) Pass computed data to DataTable via :data prop
+     f) Use named slots (#cell-{key}) to format cell content
+     g) CRUD handlers call store methods (not API directly)
+     h) Store methods handle API calls + local state updates
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useIncomeStore, useBankStore } from '../../stores';
@@ -19,6 +81,7 @@ const searchQuery = ref('');
 const showIncomeModal = ref(false);
 const showSourceModal = ref(false);
 const showDetailModal = ref(false);
+const editingSource = ref<IncomeSource | null>(null);
 const selectedIncome = ref<Income | null>(null);
 
 // ==================== Form Data ====================
@@ -26,8 +89,8 @@ const emptyIncomeForm = {
   sourceId: '',
   amount: 0,
   date: new Date().toISOString().split('T')[0],
-  bankAccountId: '',
-  categoryId: 'inc_cat_001',     // Default: Salary (IncomeCategory)
+  bankAccountId: '' as string,   // optional — cash/digital income may not have bank account
+  categoryId: '',
   description: '',
   isRecurring: false,
   recurringCycle: 'monthly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | undefined,
@@ -39,6 +102,7 @@ const emptySourceForm = {
   type: 'salary' as 'salary' | 'freelance' | 'business' | 'investment' | 'rental' | 'other',
   isActive: true,
   monthlyAmount: 0,
+  currency: 'BDT' as Currency,
 };
 
 const incomeForm = ref({ ...emptyIncomeForm });
@@ -111,7 +175,8 @@ function getSourceType(type: string): string {
   return map[type] ?? type;
 }
 
-function getBankName(accountId: string): string {
+function getBankName(accountId?: string): string {
+  if (!accountId) return 'Cash / Other';
   const acc = bankStore.bankAccounts.find((a) => a.id === accountId);
   return acc ? `${acc.bankName} (${acc.accountNumber})` : 'Unknown';
 }
@@ -133,20 +198,24 @@ function openAddIncomeModal() {
   showIncomeModal.value = true;
 }
 
-function saveIncome() {
-  if (!incomeForm.value.sourceId || !incomeForm.value.amount || !incomeForm.value.bankAccountId) return;
-  incomeStore.addIncome({
-    sourceId: incomeForm.value.sourceId,
-    amount: Number(incomeForm.value.amount),
-    date: new Date(incomeForm.value.date).toISOString(),
-    bankAccountId: incomeForm.value.bankAccountId,
-    categoryId: incomeForm.value.categoryId,
-    description: incomeForm.value.description,
-    isRecurring: incomeForm.value.isRecurring,
-    recurringCycle: incomeForm.value.isRecurring ? incomeForm.value.recurringCycle : undefined,
-    currency: incomeForm.value.currency,
-  });
-  showIncomeModal.value = false;
+async function saveIncome() {
+  if (!incomeForm.value.sourceId || !incomeForm.value.amount || !incomeForm.value.categoryId) return;
+  try {
+    await incomeStore.addIncome({
+      sourceId: incomeForm.value.sourceId,
+      amount: Number(incomeForm.value.amount),
+      date: incomeForm.value.date,
+      bankAccountId: incomeForm.value.bankAccountId || undefined,
+      categoryId: incomeForm.value.categoryId,
+      description: incomeForm.value.description,
+      isRecurring: incomeForm.value.isRecurring,
+      recurringCycle: incomeForm.value.isRecurring ? incomeForm.value.recurringCycle : undefined,
+      currency: incomeForm.value.currency,
+    });
+    showIncomeModal.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to save income');
+  }
 }
 
 function handleDeleteIncome(income: Income) {
@@ -161,24 +230,46 @@ function handleRowClick(row: Record<string, any>) {
 }
 
 function openAddSourceModal() {
+  editingSource.value = null;
   sourceForm.value = { ...emptySourceForm };
   showSourceModal.value = true;
 }
 
-function saveSource() {
+function openEditSourceModal(source: IncomeSource) {
+  editingSource.value = source;
+  sourceForm.value = {
+    name: source.name,
+    type: source.type,
+    isActive: source.isActive,
+    monthlyAmount: source.monthlyAmount || 0,
+    currency: source.currency || 'BDT',
+  };
+  showSourceModal.value = true;
+}
+
+async function saveSource() {
   if (!sourceForm.value.name) return;
-  incomeStore.addIncomeSource({
+  const payload = {
     name: sourceForm.value.name,
     type: sourceForm.value.type,
     isActive: sourceForm.value.isActive,
     monthlyAmount: sourceForm.value.monthlyAmount || undefined,
-  });
+    currency: sourceForm.value.currency,
+  };
+  if (editingSource.value) {
+    await incomeStore.updateIncomeSource(editingSource.value.id, payload);
+  } else {
+    await incomeStore.addIncomeSource(payload);
+  }
   showSourceModal.value = false;
 }
 
-function handleDeleteSource(source: IncomeSource) {
-  if (confirm(`Delete income source "${source.name}"?`)) {
-    incomeStore.deleteIncomeSource(source.id);
+async function handleDeleteSource(source: IncomeSource) {
+  if (!confirm(`Delete income source "${source.name}"?\n\nNote: If this source has income records, deletion will be blocked. Use "Deactivate" instead.`)) return;
+  try {
+    await incomeStore.deleteIncomeSource(source.id);
+  } catch (err: any) {
+    alert(err?.message || 'Cannot delete this source. It may have linked income records. Try deactivating it instead.');
   }
 }
 
@@ -187,9 +278,16 @@ function toggleSourceStatus(source: IncomeSource) {
 }
 
 // ==================== Init ====================
-onMounted(() => {
-  incomeStore.incomes;
-  incomeStore.incomeSources;
+onMounted(async () => {
+  try {
+    await Promise.all([
+      incomeStore.fetchIncomes(),
+      incomeStore.fetchIncomeSources(),
+      incomeStore.fetchIncomeCategories(),
+    ]);
+  } catch (err) {
+    console.error('Failed to load income data:', err);
+  }
 });
 </script>
 
@@ -262,7 +360,7 @@ onMounted(() => {
                 <p class="text-xs text-surface-400 capitalize">{{ source.type }}</p>
               </div>
             </div>
-            <span class="text-sm font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{{ formatCurrency(source.monthlyAmount || 0) }}</span>
+            <span class="text-sm font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{{ currencyStore.formatWithCurrency(source.monthlyAmount || 0, source.currency || 'BDT') }}</span>
           </div>
         </div>
       </div>
@@ -345,13 +443,19 @@ onMounted(() => {
             <p class="text-sm text-surface-500 dark:text-surface-400">
               {{ source.monthlyAmount ? 'Expected Monthly' : 'Variable Amount' }}
             </p>
-            <p v-if="source.monthlyAmount" class="text-xl font-bold text-accent-600 dark:text-accent-400">{{ formatCurrency(source.monthlyAmount) }}</p>
+            <p v-if="source.monthlyAmount" class="text-xl font-bold text-accent-600 dark:text-accent-400">{{ currencyStore.formatWithCurrency(source.monthlyAmount, source.currency || 'BDT') }}</p>
             <p v-else class="text-sm text-surface-400 italic">Amount varies per payment</p>
             <p class="text-xs text-surface-400 mt-1">
               {{ source.type === 'salary' ? 'Fixed monthly income from employer' : source.type === 'freelance' ? 'Project-based income, varies by contract' : source.type === 'rental' ? 'Fixed monthly rental income' : source.type === 'investment' ? 'Dividend & capital gains income' : 'Miscellaneous income' }}
             </p>
           </div>
           <div class="flex items-center gap-2 pt-3 border-t border-surface-200 dark:border-surface-700">
+            <button
+              class="text-xs px-3 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors"
+              @click="openEditSourceModal(source)"
+            >
+              Edit
+            </button>
             <button
               class="text-xs px-3 py-1.5 rounded-lg bg-surface-100 dark:bg-surface-700 text-surface-600 dark:text-surface-300 hover:bg-surface-200 dark:hover:bg-surface-600 transition-colors"
               @click="toggleSourceStatus(source)"
@@ -394,12 +498,19 @@ onMounted(() => {
             <input v-model="incomeForm.date" type="date" required class="input-field" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Bank Account *</label>
-            <select v-model="incomeForm.bankAccountId" required class="input-field">
-              <option value="" disabled>Select account</option>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Bank Account</label>
+            <select v-model="incomeForm.bankAccountId" class="input-field">
+              <option value="">None (cash / other)</option>
               <option v-for="acc in bankAccountOptions" :key="acc.id" :value="acc.id">{{ acc.bankName }} ({{ acc.accountNumber }})</option>
             </select>
           </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Category</label>
+          <select v-model="incomeForm.categoryId" class="input-field">
+            <option value="" disabled>Select category</option>
+            <option v-for="cat in incomeStore.incomeCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+          </select>
         </div>
         <div>
           <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Currency</label>
@@ -434,8 +545,8 @@ onMounted(() => {
       </form>
     </Modal>
 
-    <!-- ==================== Add Income Source Modal ==================== -->
-    <Modal :is-open="showSourceModal" title="Add Income Source" size="md" @close="showSourceModal = false">
+    <!-- ==================== Add/Edit Income Source Modal ==================== -->
+    <Modal :is-open="showSourceModal" :title="editingSource ? 'Edit Income Source' : 'Add Income Source'" size="md" @close="showSourceModal = false">
       <form @submit.prevent="saveSource" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Source Name *</label>
@@ -453,8 +564,14 @@ onMounted(() => {
           </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Monthly Amount (BDT)</label>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Monthly Amount</label>
           <input v-model.number="sourceForm.monthlyAmount" type="number" min="0" class="input-field" placeholder="0" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Currency</label>
+          <select v-model="sourceForm.currency" class="input-field">
+            <option v-for="c in currencyList" :key="c.currency" :value="c.currency">{{ c.flag }} {{ c.currency }} ({{ c.symbol }})</option>
+          </select>
         </div>
         <div class="flex items-center gap-3">
           <label class="relative inline-flex items-center cursor-pointer">

@@ -1,22 +1,67 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Invoice, InvoiceStatus } from '../types';
-import { mockInvoices } from '../mock-data/invoices';
+import type { Invoice, InvoiceItem, InvoiceStatus } from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
+import { ApiError } from '../services/api-bridge';
 import { useCurrencyStore } from './currency';
-import { generateId } from '../utils/formatters';
 
 export const useInvoiceStore = defineStore('invoice', () => {
-  const invoices = ref<Invoice[]>(mockInvoices.map(i => ({ ...i, items: i.items.map(it => ({ ...it })) })));
+  // ==================== State ====================
+  const invoices = ref<Invoice[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  // ==================== Fetchers ====================
+
+  async function fetchInvoices(params?: {
+    type?: string;
+    status?: string;
+    clientName?: string;
+  }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      invoices.value = await fetchAllPages<Invoice>('/invoice/', { params });
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch invoices';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchInvoiceById(id: string): Promise<Invoice> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const invoice = await api.get<Invoice>(`/invoice/${id}/`);
+      const index = invoices.value.findIndex(i => i.id === id);
+      if (index !== -1) {
+        invoices.value[index] = invoice;
+      } else {
+        invoices.value.push(invoice);
+      }
+      return invoice;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch invoice';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
   // ==================== Computed: Filtered Lists ====================
 
   const sentInvoices = computed(() =>
-    invoices.value.filter(i => i.type === 'sent').sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    invoices.value
+      .filter(i => i.type === 'sent')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   );
 
   const receivedInvoices = computed(() =>
-    invoices.value.filter(i => i.type === 'received').sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    invoices.value
+      .filter(i => i.type === 'received')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   );
 
   const activeInvoices = computed(() =>
@@ -63,101 +108,103 @@ export const useInvoiceStore = defineStore('invoice', () => {
     return overdueInvoices.value.reduce((sum, inv) => sum + currencyStore.convertToBase(inv.totalAmount, inv.currency || 'BDT'), 0);
   });
 
-  // ==================== Computed: Next Invoice Number ====================
+  // ==================== CRUD ====================
 
-  const nextInvoiceNumber = computed(() => {
-    const year = new Date().getFullYear();
-    const existingNumbers = invoices.value
-      .map(inv => {
-        const match = inv.invoiceNumber.match(/INV-\d{4}-(\d+)/);
-        return match ? parseInt(match[1]) : 0;
-      })
-      .filter(n => n > 0);
-
-    const nextNum = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
-    return `INV-${year}-${String(nextNum).padStart(3, '0')}`;
-  });
-
-  // ==================== Methods ====================
-
-  function addInvoice(data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'invoiceNumber'>) {
-    const now = new Date().toISOString();
-    const invoice: Invoice = {
-      ...data,
-      id: generateId('inv'),
-      invoiceNumber: nextInvoiceNumber.value,
-      createdAt: now,
-      updatedAt: now,
-    };
-    invoices.value.push(invoice);
-    return invoice;
-  }
-
-  function updateInvoice(id: string, data: Partial<Invoice>) {
-    const index = invoices.value.findIndex(i => i.id === id);
-    if (index === -1) return null;
-    invoices.value[index] = {
-      ...invoices.value[index],
-      ...data,
-      id: invoices.value[index].id,
-      createdAt: invoices.value[index].createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-    return invoices.value[index];
-  }
-
-  function deleteInvoice(id: string) {
-    const index = invoices.value.findIndex(i => i.id === id);
-    if (index !== -1) {
-      invoices.value.splice(index, 1);
+  async function addInvoice(data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'invoiceNumber'>): Promise<Invoice> {
+    error.value = null;
+    try {
+      const invoice = await api.post<Invoice>('/invoice/', data);
+      invoices.value.push(invoice);
+      return invoice;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create invoice';
+      throw err;
     }
   }
 
-  function sendInvoice(id: string) {
-    const index = invoices.value.findIndex(i => i.id === id);
-    if (index === -1) return;
-    const inv = invoices.value[index];
-    if (inv.status !== 'draft') return;
-
-    const today = new Date();
-    const dueDate = new Date(today);
-    dueDate.setDate(dueDate.getDate() + 15);
-
-    invoices.value[index] = {
-      ...inv,
-      status: 'sent',
-      issueDate: today.toISOString().split('T')[0],
-      dueDate: dueDate.toISOString().split('T')[0],
-      updatedAt: new Date().toISOString(),
-    };
+  async function updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<Invoice>(`/invoice/${id}/`, data);
+      const index = invoices.value.findIndex(i => i.id === id);
+      if (index !== -1) {
+        invoices.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update invoice';
+      throw err;
+    }
   }
 
-  function markAsPaid(id: string) {
-    const index = invoices.value.findIndex(i => i.id === id);
-    if (index === -1) return;
-    const inv = invoices.value[index];
-    if (inv.status === 'paid' || inv.status === 'cancelled' || inv.status === 'draft') return;
-
-    invoices.value[index] = {
-      ...inv,
-      status: 'paid',
-      paidDate: new Date().toISOString().split('T')[0],
-      updatedAt: new Date().toISOString(),
-    };
+  async function deleteInvoice(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/invoice/${id}/`);
+      const index = invoices.value.findIndex(i => i.id === id);
+      if (index !== -1) {
+        invoices.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete invoice';
+      throw err;
+    }
   }
 
-  function cancelInvoice(id: string) {
-    const index = invoices.value.findIndex(i => i.id === id);
-    if (index === -1) return;
-    const inv = invoices.value[index];
-    if (inv.status === 'paid' || inv.status === 'cancelled') return;
+  // ==================== Item Sub-Resource CRUD ====================
 
-    invoices.value[index] = {
-      ...inv,
-      status: 'cancelled',
-      updatedAt: new Date().toISOString(),
-    };
+  async function addItem(invoiceId: string, data: Omit<InvoiceItem, 'id'>): Promise<Invoice | null> {
+    error.value = null;
+    try {
+      await api.post<InvoiceItem>(`/invoice/${invoiceId}/items/`, data);
+      return await fetchInvoiceById(invoiceId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to add invoice item';
+      throw err;
+    }
   }
+
+  async function updateItem(
+    invoiceId: string,
+    itemId: string,
+    data: Partial<InvoiceItem>
+  ): Promise<Invoice | null> {
+    error.value = null;
+    try {
+      await api.put<InvoiceItem>(`/invoice/${invoiceId}/items/${itemId}/`, data);
+      return await fetchInvoiceById(invoiceId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update invoice item';
+      throw err;
+    }
+  }
+
+  async function deleteItem(invoiceId: string, itemId: string): Promise<Invoice | null> {
+    error.value = null;
+    try {
+      await api.delete(`/invoice/${invoiceId}/items/${itemId}/`);
+      return await fetchInvoiceById(invoiceId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete invoice item';
+      throw err;
+    }
+  }
+
+  // ==================== Status Helpers ====================
+
+  async function sendInvoice(id: string): Promise<Invoice | null> {
+    return updateInvoice(id, { status: 'sent' });
+  }
+
+  async function markAsPaid(id: string): Promise<Invoice | null> {
+    return updateInvoice(id, { status: 'paid' });
+  }
+
+  async function cancelInvoice(id: string): Promise<Invoice | null> {
+    return updateInvoice(id, { status: 'cancelled' });
+  }
+
+  // ==================== Helpers ====================
 
   function getInvoiceById(id: string): Invoice | undefined {
     return invoices.value.find(i => i.id === id);
@@ -188,8 +235,19 @@ export const useInvoiceStore = defineStore('invoice', () => {
     };
   }
 
+  function clearError() {
+    error.value = null;
+  }
+
   return {
+    // State
     invoices,
+    loading,
+    error,
+    // Fetchers
+    fetchInvoices,
+    fetchInvoiceById,
+    // Computed
     sentInvoices,
     receivedInvoices,
     activeInvoices,
@@ -201,14 +259,21 @@ export const useInvoiceStore = defineStore('invoice', () => {
     totalReceivedAmount,
     totalPendingAmount,
     totalOverdueAmount,
-    nextInvoiceNumber,
+    // CRUD
     addInvoice,
     updateInvoice,
     deleteInvoice,
+    // Item sub-resource CRUD
+    addItem,
+    updateItem,
+    deleteItem,
+    // Status helpers
     sendInvoice,
     markAsPaid,
     cancelInvoice,
+    // Helpers
     getInvoiceById,
     getInvoiceStats,
+    clearError,
   };
 });

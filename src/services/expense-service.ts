@@ -1,6 +1,5 @@
 import type { Expense, ExpenseCategory } from '../types';
 import { dataService } from './data-service';
-import { generateId } from '../utils/formatters';
 
 export const expenseService = {
   // ==================== Expense CRUD ====================

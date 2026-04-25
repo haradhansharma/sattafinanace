@@ -1,20 +1,71 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { DocumentVaultItem, DocumentCategory, DocumentStatus, DocumentVersion } from '../types';
-import { mockDocuments } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type { DocumentVaultItem, DocumentVersion, DocumentCategory, DocumentStatus } from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
+import { ApiError } from '../services/api-bridge';
 
 export const useDocumentStore = defineStore('document', () => {
-  const documents = ref<DocumentVaultItem[]>(mockDocuments.map(d => ({
-    ...d,
-    versions: d.versions.map(v => ({ ...v })),
-    tags: [...d.tags],
-  })));
+  // ==================== State ====================
+  const documents = ref<DocumentVaultItem[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  // ==================== Fetchers ====================
+
+  async function fetchDocuments(params?: {
+    category?: string;
+    status?: string;
+    format?: string;
+  }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      documents.value = await fetchAllPages<DocumentVaultItem>('/document/', { params });
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch documents';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchDocumentById(id: string): Promise<DocumentVaultItem> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const doc = await api.get<DocumentVaultItem>(`/document/${id}/`);
+      const index = documents.value.findIndex(d => d.id === id);
+      if (index !== -1) {
+        documents.value[index] = doc;
+      } else {
+        documents.value.push(doc);
+      }
+      return doc;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch document';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchDocumentVersions(documentId: string): Promise<DocumentVersion[]> {
+    loading.value = true;
+    error.value = null;
+    try {
+      return await fetchAllPages<DocumentVersion>(`/document/${documentId}/versions/`);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch document versions';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
   // ==================== Computed ====================
 
   const totalDocuments = computed(() => documents.value.length);
+
   const totalFileSize = computed(() =>
     documents.value.reduce((sum, d) => sum + d.fileSize, 0)
   );
@@ -39,14 +90,8 @@ export const useDocumentStore = defineStore('document', () => {
     documents.value.filter(d => d.status === 'expired')
   );
 
-  const draftDocuments = computed(() =>
-    documents.value.filter(d => d.status === 'draft')
-  );
-
-  // Documents expiring soon (within N days, default 30)
   const documentsExpiringSoon = computed(() => {
     const now = new Date();
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
     return documents.value.filter(d => {
       if (!d.expiryDate) return false;
       const exp = new Date(d.expiryDate);
@@ -65,44 +110,105 @@ export const useDocumentStore = defineStore('document', () => {
     });
   });
 
-  // Category breakdown
-  const documentsByCategory = computed(() => {
-    const map: Record<string, DocumentVaultItem[]> = {};
-    documents.value.forEach(d => {
-      if (!map[d.category]) map[d.category] = [];
-      map[d.category].push(d);
-    });
-    return map;
-  });
+  // ==================== CRUD ====================
 
-  const categoryCounts = computed(() => {
-    const map = {} as Record<string, number>;
-    documents.value.forEach(d => {
-      map[d.category] = (map[d.category] || 0) + 1;
-    });
-    return map;
-  });
+  async function addDocument(data: Omit<DocumentVaultItem, 'id' | 'createdAt' | 'updatedAt' | 'versions' | 'currentVersion'>): Promise<DocumentVaultItem> {
+    error.value = null;
+    try {
+      const doc = await api.post<DocumentVaultItem>('/document/', data);
+      documents.value.unshift(doc);
+      return doc;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create document';
+      throw err;
+    }
+  }
 
-  // Format breakdown
-  const formatCounts = computed(() => {
-    const map = {} as Record<string, number>;
-    documents.value.forEach(d => {
-      map[d.format] = (map[d.format] || 0) + 1;
-    });
-    return map;
-  });
+  async function updateDocument(id: string, data: Partial<DocumentVaultItem>): Promise<DocumentVaultItem | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<DocumentVaultItem>(`/document/${id}/`, data);
+      const index = documents.value.findIndex(d => d.id === id);
+      if (index !== -1) {
+        documents.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update document';
+      throw err;
+    }
+  }
 
-  // Total encrypted
-  const encryptedCount = computed(() =>
-    documents.value.filter(d => d.isEncrypted).length
-  );
+  async function deleteDocument(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/document/${id}/`);
+      const index = documents.value.findIndex(d => d.id === id);
+      if (index !== -1) {
+        documents.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete document';
+      throw err;
+    }
+  }
 
-  // Shared documents
-  const sharedDocuments = computed(() =>
-    documents.value.filter(d => d.sharedWith && d.sharedWith.length > 0)
-  );
+  // ==================== Version Sub-Resource ====================
 
-  // Search
+  async function addVersion(
+    docId: string,
+    data: Omit<DocumentVersion, 'versionNumber'>
+  ): Promise<DocumentVaultItem | null> {
+    error.value = null;
+    try {
+      await api.post<DocumentVersion>(`/document/${docId}/versions/`, data);
+      return await fetchDocumentById(docId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to add document version';
+      throw err;
+    }
+  }
+
+  // ==================== Toggle & Status Helpers ====================
+
+  async function toggleFavorite(id: string): Promise<DocumentVaultItem | null> {
+    const doc = documents.value.find(d => d.id === id);
+    if (!doc) return null;
+    return updateDocument(id, { isFavorite: !doc.isFavorite });
+  }
+
+  async function toggleImportant(id: string): Promise<DocumentVaultItem | null> {
+    const doc = documents.value.find(d => d.id === id);
+    if (!doc) return null;
+    return updateDocument(id, { isImportant: !doc.isImportant });
+  }
+
+  async function updateStatus(id: string, status: DocumentStatus): Promise<DocumentVaultItem | null> {
+    return updateDocument(id, { status });
+  }
+
+  async function archiveDocument(id: string): Promise<DocumentVaultItem | null> {
+    return updateStatus(id, 'archived');
+  }
+
+  async function restoreDocument(id: string): Promise<DocumentVaultItem | null> {
+    return updateStatus(id, 'active');
+  }
+
+  // ==================== Helpers ====================
+
+  function getDocumentById(id: string): DocumentVaultItem | undefined {
+    return documents.value.find(d => d.id === id);
+  }
+
+  function getByCategory(category: DocumentCategory): DocumentVaultItem[] {
+    return documents.value.filter(d => d.category === category);
+  }
+
+  function getByFormat(format: string): DocumentVaultItem[] {
+    return documents.value.filter(d => d.format === format);
+  }
+
   function searchDocuments(query: string): DocumentVaultItem[] {
     const q = query.toLowerCase().trim();
     if (!q) return documents.value;
@@ -115,104 +221,20 @@ export const useDocumentStore = defineStore('document', () => {
     );
   }
 
-  // ==================== CRUD ====================
-
-  function addDocument(data: Omit<DocumentVaultItem, 'id' | 'createdAt' | 'updatedAt' | 'versions' | 'currentVersion' | 'tags'>) {
-    const now = new Date().toISOString();
-    const doc: DocumentVaultItem = {
-      ...data,
-      versions: data.fileSize ? [{ versionNumber: 1, date: now.split('T')[0], fileSize: data.fileSize }] : [],
-      currentVersion: 1,
-      tags: data.tags || [],
-      id: generateId('doc'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    documents.value.unshift(doc); // newest first
-    return doc;
-  }
-
-  function updateDocument(id: string, data: Partial<DocumentVaultItem>) {
-    const index = documents.value.findIndex(d => d.id === id);
-    if (index === -1) return null;
-    documents.value[index] = {
-      ...documents.value[index],
-      ...data,
-      id: documents.value[index].id,
-      createdAt: documents.value[index].createdAt,
-      versions: data.versions ?? documents.value[index].versions,
-      tags: data.tags ?? documents.value[index].tags,
-      updatedAt: new Date().toISOString(),
-    };
-    return documents.value[index];
-  }
-
-  function deleteDocument(id: string) {
-    const index = documents.value.findIndex(d => d.id === id);
-    if (index !== -1) documents.value.splice(index, 1);
-  }
-
-  function toggleFavorite(id: string) {
-    const doc = documents.value.find(d => d.id === id);
-    if (doc) {
-      doc.isFavorite = !doc.isFavorite;
-      doc.updatedAt = new Date().toISOString();
-    }
-  }
-
-  function toggleImportant(id: string) {
-    const doc = documents.value.find(d => d.id === id);
-    if (doc) {
-      doc.isImportant = !doc.isImportant;
-      doc.updatedAt = new Date().toISOString();
-    }
-  }
-
-  function addVersion(docId: string, version: Omit<DocumentVersion, 'versionNumber'>) {
-    const doc = documents.value.find(d => d.id === docId);
-    if (!doc) return;
-    const newVersion: DocumentVersion = {
-      ...version,
-      versionNumber: doc.currentVersion + 1,
-    };
-    doc.versions.push(newVersion);
-    doc.currentVersion = newVersion.versionNumber;
-    doc.fileSize = version.fileSize;
-    doc.updatedAt = new Date().toISOString();
-    return doc;
-  }
-
-  function updateStatus(id: string, status: DocumentStatus) {
-    const doc = documents.value.find(d => d.id === id);
-    if (!doc) return;
-    doc.status = status;
-    doc.updatedAt = new Date().toISOString();
-  }
-
-  function archiveDocument(id: string) {
-    updateStatus(id, 'archived');
-  }
-
-  function restoreDocument(id: string) {
-    updateStatus(id, 'active');
-  }
-
-  function getDocumentById(id: string): DocumentVaultItem | undefined {
-    return documents.value.find(d => d.id === id);
-  }
-
-  // Filter by category
-  function getByCategory(category: DocumentCategory): DocumentVaultItem[] {
-    return documents.value.filter(d => d.category === category);
-  }
-
-  // Filter by format
-  function getByFormat(format: string): DocumentVaultItem[] {
-    return documents.value.filter(d => d.format === format);
+  function clearError() {
+    error.value = null;
   }
 
   return {
+    // State
     documents,
+    loading,
+    error,
+    // Fetchers
+    fetchDocuments,
+    fetchDocumentById,
+    fetchDocumentVersions,
+    // Computed
     totalDocuments,
     totalFileSize,
     activeDocuments,
@@ -220,26 +242,25 @@ export const useDocumentStore = defineStore('document', () => {
     importantDocuments,
     archivedDocuments,
     expiredDocuments,
-    draftDocuments,
     documentsExpiringSoon,
     overdueDocuments,
-    documentsByCategory,
-    categoryCounts,
-    formatCounts,
-    encryptedCount,
-    sharedDocuments,
-    searchDocuments,
+    // CRUD
     addDocument,
     updateDocument,
     deleteDocument,
+    // Version sub-resource
+    addVersion,
+    // Toggle & status
     toggleFavorite,
     toggleImportant,
-    addVersion,
     updateStatus,
     archiveDocument,
     restoreDocument,
+    // Helpers
     getDocumentById,
     getByCategory,
     getByFormat,
+    searchDocuments,
+    clearError,
   };
 });

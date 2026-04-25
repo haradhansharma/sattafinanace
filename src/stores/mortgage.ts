@@ -1,13 +1,20 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Mortgage, AmortizationEntry, HeldMortgage, HeldMortgagePayment, HeldMortgageStatus } from '../types';
-import { mockMortgages, mockHeldMortgages } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type {
+  Mortgage,
+  AmortizationEntry,
+  HeldMortgage,
+  HeldMortgagePayment,
+  HeldMortgageStatus,
+} from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
 
 export const useMortgageStore = defineStore('mortgage', () => {
-  const mortgages = ref<Mortgage[]>(mockMortgages.map(m => ({ ...m })));
-  const heldMortgages = ref<HeldMortgage[]>(mockHeldMortgages.map(m => ({ ...m, payments: m.payments.map(p => ({ ...p })) })));
+  // ==================== State ====================
+  const mortgages = ref<Mortgage[]>([]);
+  const heldMortgages = ref<HeldMortgage[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // ==================== My Mortgages Computed ====================
 
@@ -25,7 +32,8 @@ export const useMortgageStore = defineStore('mortgage', () => {
 
   const totalEquity = computed(() =>
     mortgages.value.reduce((sum, m) => {
-      const marketVal = m.property.currentMarketValue || m.property.purchasePrice;
+      const marketVal =
+        m.property.currentMarketValue || m.property.purchasePrice;
       return sum + (marketVal - m.currentBalance);
     }, 0)
   );
@@ -41,11 +49,16 @@ export const useMortgageStore = defineStore('mortgage', () => {
   );
 
   const totalHeldOutstanding = computed(() =>
-    heldMortgages.value.filter(m => m.status === 'active' || m.status === 'paused').reduce((sum, m) => sum + m.currentBalance, 0)
+    heldMortgages.value
+      .filter(m => m.status === 'active' || m.status === 'paused')
+      .reduce((sum, m) => sum + m.currentBalance, 0)
   );
 
   const totalMonthlyIncome = computed(() =>
-    activeHeldMortgages.value.reduce((sum, m) => sum + m.expectedMonthlyPayment, 0)
+    activeHeldMortgages.value.reduce(
+      (sum, m) => sum + m.expectedMonthlyPayment,
+      0
+    )
   );
 
   const totalInterestEarnedHeld = computed(() =>
@@ -88,7 +101,9 @@ export const useMortgageStore = defineStore('mortgage', () => {
 
   // ==================== Amortization (Held Mortgages) ====================
 
-  function generateHeldAmortizationSchedule(hm: HeldMortgage): AmortizationEntry[] {
+  function generateHeldAmortizationSchedule(
+    hm: HeldMortgage
+  ): AmortizationEntry[] {
     const monthlyRate = hm.interestRate / 100 / 12;
     const schedule: AmortizationEntry[] = [];
     let remaining = hm.loanAmount;
@@ -115,59 +130,153 @@ export const useMortgageStore = defineStore('mortgage', () => {
     return schedule;
   }
 
-  // ==================== My Mortgage CRUD ====================
+  // ==================== Fetch / List ====================
 
-  function addMortgage(data: Omit<Mortgage, 'id' | 'createdAt' | 'updatedAt'>) {
-    const now = new Date().toISOString();
-    const mortgage: Mortgage = {
-      ...data,
-      id: generateId('mort'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    mortgages.value.push(mortgage);
-    return mortgage;
-  }
-
-  function updateMortgage(id: string, data: Partial<Mortgage>) {
-    const index = mortgages.value.findIndex(m => m.id === id);
-    if (index === -1) return null;
-    mortgages.value[index] = {
-      ...mortgages.value[index],
-      ...data,
-      id: mortgages.value[index].id,
-      createdAt: mortgages.value[index].createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-    return mortgages.value[index];
-  }
-
-  function deleteMortgage(id: string) {
-    const index = mortgages.value.findIndex(m => m.id === id);
-    if (index !== -1) {
-      mortgages.value.splice(index, 1);
+  async function fetchMortgages(): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      mortgages.value = await fetchAllPages<Mortgage>('/mortgage/');
+    } catch (err: any) {
+      error.value = err.message || 'Failed to fetch mortgages';
+      throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
-  function recordPayment(id: string, amount: number) {
-    const mortgage = mortgages.value.find(m => m.id === id);
-    if (!mortgage) return;
+  async function fetchHeldMortgages(): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      heldMortgages.value = await fetchAllPages<HeldMortgage>(
+        '/mortgage/held/'
+      );
+    } catch (err: any) {
+      error.value = err.message || 'Failed to fetch held mortgages';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
-    const monthlyRate = mortgage.interestRate / 100 / 12;
-    const interestPortion = Math.round(mortgage.currentBalance * monthlyRate);
-    const principalPortion = amount - interestPortion;
+  // ==================== Internal helpers ====================
 
-    const nextPayment = new Date(mortgage.nextPaymentDate);
-    nextPayment.setMonth(nextPayment.getMonth() + 1);
+  async function fetchHeldMortgageById(id: string): Promise<HeldMortgage> {
+    const result = await api.get<HeldMortgage>(`/mortgage/held/${id}/`);
+    const idx = heldMortgages.value.findIndex(m => m.id === id);
+    if (idx !== -1) {
+      heldMortgages.value[idx] = result;
+    }
+    return result;
+  }
 
-    mortgage.paidAmount += amount;
-    mortgage.paidInstallments += 1;
-    mortgage.currentBalance = Math.max(0, mortgage.currentBalance - principalPortion);
-    mortgage.nextPaymentDate = nextPayment.toISOString();
-    mortgage.updatedAt = new Date().toISOString();
+  function replaceMortgage(mortgage: Mortgage): void {
+    const idx = mortgages.value.findIndex(m => m.id === mortgage.id);
+    if (idx !== -1) {
+      mortgages.value[idx] = mortgage;
+    }
+  }
 
-    if (mortgage.currentBalance <= 0) {
-      mortgage.status = 'completed';
+  function replaceHeldMortgage(hm: HeldMortgage): void {
+    const idx = heldMortgages.value.findIndex(m => m.id === hm.id);
+    if (idx !== -1) {
+      heldMortgages.value[idx] = hm;
+    }
+  }
+
+  // ==================== My Mortgage CRUD ====================
+
+  type MortgageCreateData = Omit<Mortgage, 'id' | 'createdAt' | 'updatedAt'>;
+
+  async function addMortgage(data: MortgageCreateData): Promise<Mortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const created = await api.post<Mortgage>('/mortgage/', data);
+      mortgages.value.push(created);
+      return created;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to create mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function updateMortgage(
+    id: string,
+    data: Partial<Mortgage>
+  ): Promise<Mortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const updated = await api.put<Mortgage>(`/mortgage/${id}/`, data);
+      replaceMortgage(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function deleteMortgage(id: string): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.delete(`/mortgage/${id}/`);
+      const idx = mortgages.value.findIndex(m => m.id === id);
+      if (idx !== -1) mortgages.value.splice(idx, 1);
+    } catch (err: any) {
+      error.value = err.message || 'Failed to delete mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  /**
+   * Record a payment on a regular mortgage.
+   * Computes interest/principal split locally, then PUTs updated fields
+   * to the backend and refreshes local state.
+   */
+  async function recordPayment(id: string, amount: number): Promise<Mortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const current = mortgages.value.find(m => m.id === id);
+      if (!current) throw new Error('Mortgage not found');
+
+      const monthlyRate = current.interestRate / 100 / 12;
+      const interestPortion = Math.round(current.currentBalance * monthlyRate);
+      const principalPortion = amount - interestPortion;
+
+      const nextPayment = new Date(current.nextPaymentDate);
+      nextPayment.setMonth(nextPayment.getMonth() + 1);
+
+      const newPaidAmount = current.paidAmount + amount;
+      const newPaidInstallments = current.paidInstallments + 1;
+      const newBalance = Math.max(0, current.currentBalance - principalPortion);
+      const newStatus =
+        newBalance <= 0 ? ('completed' as const) : current.status;
+
+      const updated = await api.put<Mortgage>(`/mortgage/${id}/`, {
+        paidAmount: newPaidAmount,
+        paidInstallments: newPaidInstallments,
+        currentBalance: newBalance,
+        nextPaymentDate: nextPayment.toISOString(),
+        status: newStatus,
+      });
+
+      replaceMortgage(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to record mortgage payment';
+      throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
@@ -177,83 +286,108 @@ export const useMortgageStore = defineStore('mortgage', () => {
 
   // ==================== Held Mortgage CRUD ====================
 
-  function addHeldMortgage(data: Omit<HeldMortgage, 'id' | 'createdAt' | 'updatedAt' | 'payments'>) {
-    const now = new Date().toISOString();
-    const hm: HeldMortgage = {
-      ...data,
-      payments: [],
-      id: generateId('hmort'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    heldMortgages.value.push(hm);
-    return hm;
-  }
+  type HeldMortgageCreateData = Omit<
+    HeldMortgage,
+    'id' | 'createdAt' | 'updatedAt' | 'payments'
+  >;
 
-  function updateHeldMortgage(id: string, data: Partial<HeldMortgage>) {
-    const index = heldMortgages.value.findIndex(m => m.id === id);
-    if (index === -1) return null;
-    heldMortgages.value[index] = {
-      ...heldMortgages.value[index],
-      ...data,
-      id: heldMortgages.value[index].id,
-      createdAt: heldMortgages.value[index].createdAt,
-      payments: data.payments ?? heldMortgages.value[index].payments,
-      updatedAt: new Date().toISOString(),
-    };
-    return heldMortgages.value[index];
-  }
-
-  function deleteHeldMortgage(id: string) {
-    const index = heldMortgages.value.findIndex(m => m.id === id);
-    if (index !== -1) {
-      heldMortgages.value.splice(index, 1);
+  async function addHeldMortgage(
+    data: HeldMortgageCreateData
+  ): Promise<HeldMortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const created = await api.post<HeldMortgage>('/mortgage/held/', data);
+      heldMortgages.value.push(created);
+      return created;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to create held mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
-  function recordHeldPayment(id: string, amount: number, note?: string) {
-    const hm = heldMortgages.value.find(m => m.id === id);
-    if (!hm) return;
-
-    const monthlyRate = hm.interestRate / 100 / 12;
-    const interestPortion = Math.round(hm.currentBalance * monthlyRate);
-    const principalPortion = amount - interestPortion;
-
-    const payment: HeldMortgagePayment = {
-      id: generateId('hmp'),
-      heldMortgageId: id,
-      amount,
-      principalComponent: Math.round(principalPortion),
-      interestComponent: Math.round(interestPortion),
-      paymentDate: new Date().toISOString().split('T')[0],
-      paymentNumber: hm.receivedInstallments + 1,
-      note,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    hm.payments.push(payment);
-
-    const nextDue = new Date(hm.nextPaymentDueDate);
-    nextDue.setMonth(nextDue.getMonth() + 1);
-
-    hm.totalReceivedAmount += amount;
-    hm.totalInterestEarned += Math.round(interestPortion);
-    hm.receivedInstallments += 1;
-    hm.currentBalance = Math.max(0, hm.currentBalance - Math.round(principalPortion));
-    hm.nextPaymentDueDate = nextDue.toISOString();
-    hm.updatedAt = new Date().toISOString();
-
-    if (hm.currentBalance <= 0) {
-      hm.status = 'completed';
+  async function updateHeldMortgage(
+    id: string,
+    data: Partial<HeldMortgage>
+  ): Promise<HeldMortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const updated = await api.put<HeldMortgage>(
+        `/mortgage/held/${id}/`,
+        data
+      );
+      replaceHeldMortgage(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update held mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
-  function updateHeldMortgageStatus(id: string, status: HeldMortgageStatus) {
-    const hm = heldMortgages.value.find(m => m.id === id);
-    if (!hm) return;
-    hm.status = status;
-    hm.updatedAt = new Date().toISOString();
+  async function deleteHeldMortgage(id: string): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.delete(`/mortgage/held/${id}/`);
+      const idx = heldMortgages.value.findIndex(m => m.id === id);
+      if (idx !== -1) heldMortgages.value.splice(idx, 1);
+    } catch (err: any) {
+      error.value = err.message || 'Failed to delete held mortgage';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  /**
+   * Record a payment received on a held mortgage.
+   * POSTs to the payments endpoint, then re-fetches the held mortgage
+   * to get updated totals (backend auto-calculates).
+   */
+  async function recordHeldPayment(
+    id: string,
+    amount: number,
+    note?: string
+  ): Promise<HeldMortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      await api.post(`/mortgage/held/${id}/payments/`, { amount, note });
+      // Re-fetch to get updated totals from backend
+      const refreshed = await fetchHeldMortgageById(id);
+      return refreshed;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to record held mortgage payment';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function updateHeldMortgageStatus(
+    id: string,
+    status: HeldMortgageStatus
+  ): Promise<HeldMortgage> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const updated = await api.put<HeldMortgage>(
+        `/mortgage/held/${id}/`,
+        { status }
+      );
+      replaceHeldMortgage(updated);
+      return updated;
+    } catch (err: any) {
+      error.value = err.message || 'Failed to update held mortgage status';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
   }
 
   function getHeldMortgageById(id: string): HeldMortgage | undefined {
@@ -261,27 +395,34 @@ export const useMortgageStore = defineStore('mortgage', () => {
   }
 
   return {
-    // My Mortgages
+    // State
     mortgages,
+    heldMortgages,
+    loading,
+    error,
+    // My Mortgages Computed
     activeMortgages,
     totalMortgageDebt,
     totalMonthlyEMI,
     totalEquity,
     totalEscrowMonthly,
+    // My Mortgages Actions
     generateAmortizationSchedule,
+    fetchMortgages,
     addMortgage,
     updateMortgage,
     deleteMortgage,
     recordPayment,
     getMortgageById,
-    // Held Mortgages
-    heldMortgages,
+    // Held Mortgages Computed
     activeHeldMortgages,
     totalHeldOutstanding,
     totalMonthlyIncome,
     totalInterestEarnedHeld,
     totalCollateralValue,
+    // Held Mortgages Actions
     generateHeldAmortizationSchedule,
+    fetchHeldMortgages,
     addHeldMortgage,
     updateHeldMortgage,
     deleteHeldMortgage,

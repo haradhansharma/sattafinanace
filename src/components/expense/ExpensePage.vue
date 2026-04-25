@@ -42,7 +42,10 @@ const emptyCategoryForm = {
   color: 'slate',
   type: 'needs' as 'needs' | 'wants' | 'savings' | 'investments',
   budgetLimit: 0,
+  currency: 'BDT' as Currency,
 };
+
+const editingCategoryId = ref<string | null>(null);
 
 const expenseForm = ref({ ...emptyExpenseForm });
 const categoryForm = ref({ ...emptyCategoryForm });
@@ -133,7 +136,8 @@ function getCategoryColor(categoryId: string): string {
   return expenseStore.categories.find((c) => c.id === categoryId)?.color ?? 'slate';
 }
 
-function getBankName(accountId: string): string {
+function getBankName(accountId?: string): string {
+  if (!accountId) return 'Cash / Other';
   const acc = bankStore.bankAccounts.find((a) => a.id === accountId);
   return acc ? `${acc.bankName} (${acc.accountNumber})` : 'Unknown';
 }
@@ -200,26 +204,34 @@ function openAddExpenseModal() {
   showExpenseModal.value = true;
 }
 
-function saveExpense() {
-  if (!expenseForm.value.categoryId || !expenseForm.value.amount || !expenseForm.value.bankAccountId) return;
-  expenseStore.addExpense({
-    amount: Number(expenseForm.value.amount),
-    date: new Date(expenseForm.value.date).toISOString(),
-    categoryId: expenseForm.value.categoryId,
-    bankAccountId: expenseForm.value.bankAccountId,
-    cardId: expenseForm.value.cardId || undefined,
-    description: expenseForm.value.description,
-    isRecurring: expenseForm.value.isRecurring,
-    recurringCycle: expenseForm.value.isRecurring ? expenseForm.value.recurringCycle : undefined,
-    tags: expenseForm.value.tags,
-    currency: expenseForm.value.currency,
-  });
-  showExpenseModal.value = false;
+async function saveExpense() {
+  if (!expenseForm.value.categoryId || !expenseForm.value.amount) return;
+  try {
+    await expenseStore.addExpense({
+      amount: Number(expenseForm.value.amount),
+      date: expenseForm.value.date,
+      categoryId: expenseForm.value.categoryId,
+      bankAccountId: expenseForm.value.bankAccountId || undefined,
+      cardId: expenseForm.value.cardId || undefined,
+      description: expenseForm.value.description,
+      isRecurring: expenseForm.value.isRecurring,
+      recurringCycle: expenseForm.value.isRecurring ? expenseForm.value.recurringCycle : undefined,
+      tags: expenseForm.value.tags,
+      currency: expenseForm.value.currency,
+    });
+    showExpenseModal.value = false;
+  } catch (err: any) {
+    alert(err?.message || 'Failed to save expense');
+  }
 }
 
-function handleDeleteExpense(expense: Expense) {
+async function handleDeleteExpense(expense: Expense) {
   if (confirm(`Delete this expense of ${formatCurrency(expense.amount)}?`)) {
-    expenseStore.deleteExpense(expense.id);
+    try {
+      await expenseStore.deleteExpense(expense.id);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete expense');
+    }
   }
 }
 
@@ -230,31 +242,64 @@ function handleRowClick(row: Record<string, any>) {
 
 function openAddCategoryModal() {
   categoryForm.value = { ...emptyCategoryForm };
+  editingCategoryId.value = null;
   showCategoryModal.value = true;
 }
 
-function saveCategory() {
+function openEditCategoryModal(category: ExpenseCategory) {
+  categoryForm.value = {
+    name: category.name,
+    icon: category.icon,
+    color: category.color,
+    type: category.type,
+    budgetLimit: category.budgetLimit ?? 0,
+    currency: (category.currency as Currency) || 'BDT',
+  };
+  editingCategoryId.value = category.id;
+  showCategoryModal.value = true;
+}
+
+async function saveCategory() {
   if (!categoryForm.value.name) return;
-  expenseStore.addCategory({
+  const data = {
     name: categoryForm.value.name,
     icon: categoryForm.value.icon,
     color: categoryForm.value.color,
     type: categoryForm.value.type,
     budgetLimit: categoryForm.value.budgetLimit || undefined,
-  });
+    currency: categoryForm.value.currency,
+  };
+  if (editingCategoryId.value) {
+    await expenseStore.updateCategory(editingCategoryId.value, data);
+  } else {
+    await expenseStore.addCategory(data);
+  }
   showCategoryModal.value = false;
 }
 
-function handleDeleteCategory(category: ExpenseCategory) {
-  if (confirm(`Delete category "${category.name}"? This cannot be undone.`)) {
-    expenseStore.deleteCategory(category.id);
+function getCategoryModalTitle(): string {
+  return editingCategoryId.value ? 'Edit Category' : 'Add Category';
+}
+
+async function handleDeleteCategory(category: ExpenseCategory) {
+  if (!confirm(`Delete category "${category.name}"? This cannot be undone.`)) return;
+  try {
+    await expenseStore.deleteCategory(category.id);
+  } catch (err: any) {
+    alert(err?.message || 'Cannot delete this category. It may have linked expense records.');
   }
 }
 
 // ==================== Init ====================
-onMounted(() => {
-  expenseStore.expenses;
-  expenseStore.categories;
+onMounted(async () => {
+  try {
+    await Promise.all([
+      expenseStore.fetchExpenses(),
+      expenseStore.fetchCategories(),
+    ]);
+  } catch (err) {
+    console.error('Failed to load expense data:', err);
+  }
 });
 </script>
 
@@ -339,7 +384,7 @@ onMounted(() => {
         </template>
         <template #cell-bankAccount="{ row }">
           <div>
-            <span class="text-surface-600 dark:text-surface-400 text-xs">{{ getBankName(row.bankAccountId) }}</span>
+            <span class="text-surface-600 dark:text-surface-400 text-xs">{{ row.bankAccountId ? getBankName(row.bankAccountId) : 'Cash' }}</span>
             <span v-if="row.cardId" class="text-surface-400 dark:text-surface-500 text-xs block">{{ getCardName(row.cardId) }}</span>
           </div>
         </template>
@@ -439,6 +484,13 @@ onMounted(() => {
 
           <!-- Actions -->
           <div class="flex items-center gap-2 pt-3 mt-3 border-t border-surface-200 dark:border-surface-700">
+            <span v-if="cat.currency" class="text-xs text-surface-400 mr-auto">{{ cat.currency }}</span>
+            <button
+              class="text-xs px-3 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors"
+              @click="openEditCategoryModal(cat)"
+            >
+              Edit
+            </button>
             <button
               class="text-xs px-3 py-1.5 rounded-lg bg-danger-50 dark:bg-danger-500/10 text-danger-600 dark:text-danger-400 hover:bg-danger-100 dark:hover:bg-danger-500/20 transition-colors"
               @click="handleDeleteCategory(cat)"
@@ -482,9 +534,9 @@ onMounted(() => {
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Bank Account *</label>
-            <select v-model="expenseForm.bankAccountId" required class="input-field">
-              <option value="" disabled>Select account</option>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Bank Account (optional)</label>
+            <select v-model="expenseForm.bankAccountId" class="input-field">
+              <option value="">Cash / No Account</option>
               <option v-for="acc in bankAccountOptions" :key="acc.id" :value="acc.id">{{ acc.bankName }} ({{ acc.accountNumber }})</option>
             </select>
           </div>
@@ -523,8 +575,8 @@ onMounted(() => {
       </form>
     </Modal>
 
-    <!-- ==================== Add Category Modal ==================== -->
-    <Modal :is-open="showCategoryModal" title="Add Category" size="md" @close="showCategoryModal = false">
+    <!-- ==================== Add/Edit Category Modal ==================== -->
+    <Modal :is-open="showCategoryModal" :title="getCategoryModalTitle()" size="md" @close="showCategoryModal = false">
       <form @submit.prevent="saveCategory" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Category Name *</label>
@@ -570,9 +622,17 @@ onMounted(() => {
             <option value="investments">Investments</option>
           </select>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Budget Limit (BDT)</label>
-          <input v-model.number="categoryForm.budgetLimit" type="number" min="0" class="input-field" placeholder="0" />
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Budget Limit</label>
+            <input v-model.number="categoryForm.budgetLimit" type="number" min="0" class="input-field" placeholder="0" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">Currency</label>
+            <select v-model="categoryForm.currency" class="input-field">
+              <option v-for="c in currencyList" :key="c.currency" :value="c.currency">{{ c.flag }} {{ c.currency }}</option>
+            </select>
+          </div>
         </div>
         <div class="flex justify-end gap-3 pt-4 border-t border-surface-200 dark:border-surface-700">
           <button type="button" class="btn-secondary" @click="showCategoryModal = false">Cancel</button>
@@ -603,9 +663,13 @@ onMounted(() => {
             <p class="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wider">Date</p>
             <p class="text-sm text-surface-700 dark:text-surface-300 mt-1">{{ formatDate(selectedExpense.date, 'long') }}</p>
           </div>
-          <div>
+          <div v-if="selectedExpense.bankAccountId">
             <p class="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wider">Bank Account</p>
             <p class="text-sm text-surface-700 dark:text-surface-300 mt-1">{{ getBankName(selectedExpense.bankAccountId) }}</p>
+          </div>
+          <div v-else>
+            <p class="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wider">Payment Method</p>
+            <p class="text-sm text-surface-700 dark:text-surface-300 mt-1">Cash</p>
           </div>
           <div v-if="selectedExpense.cardId">
             <p class="text-xs text-surface-500 dark:text-surface-400 uppercase tracking-wider">Card</p>

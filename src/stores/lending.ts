@@ -1,12 +1,62 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { Lending } from '../types';
-import { mockLendings } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import type { Lending, LendingPayment } from '../types';
+import { api, fetchAllPages } from '../services/api-bridge';
+import { ApiError } from '../services/api-bridge';
 
 export const useLendingStore = defineStore('lending', () => {
-  const lendings = ref<Lending[]>(mockLendings.map(l => ({ ...l })));
+  // ==================== State ====================
+  const lendings = ref<Lending[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  // ==================== Fetchers ====================
+
+  async function fetchLendings(params?: { status?: string }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      lendings.value = await fetchAllPages<Lending>('/lending/', { params });
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch lendings';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchLendingById(id: string): Promise<Lending> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const lending = await api.get<Lending>(`/lending/${id}/`);
+      const index = lendings.value.findIndex(l => l.id === id);
+      if (index !== -1) {
+        lendings.value[index] = lending;
+      } else {
+        lendings.value.push(lending);
+      }
+      return lending;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch lending';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchLendingPayments(lendingId: string): Promise<LendingPayment[]> {
+    loading.value = true;
+    error.value = null;
+    try {
+      return await fetchAllPages<LendingPayment>(`/lending/${lendingId}/payments/`);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch lending payments';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
   // ==================== Computed ====================
 
@@ -42,76 +92,107 @@ export const useLendingStore = defineStore('lending', () => {
 
   // ==================== CRUD ====================
 
-  function addLending(data: Omit<Lending, 'id' | 'createdAt' | 'updatedAt'>) {
-    const now = new Date().toISOString();
-    const lending: Lending = {
-      ...data,
-      id: generateId('lend'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    lendings.value.push(lending);
-    return lending;
-  }
-
-  function updateLending(id: string, data: Partial<Lending>) {
-    const index = lendings.value.findIndex(l => l.id === id);
-    if (index === -1) return null;
-    lendings.value[index] = {
-      ...lendings.value[index],
-      ...data,
-      id: lendings.value[index].id,
-      createdAt: lendings.value[index].createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-    return lendings.value[index];
-  }
-
-  function deleteLending(id: string) {
-    const index = lendings.value.findIndex(l => l.id === id);
-    if (index !== -1) {
-      lendings.value.splice(index, 1);
+  async function addLending(data: Omit<Lending, 'id' | 'createdAt' | 'updatedAt'>): Promise<Lending> {
+    error.value = null;
+    try {
+      const lending = await api.post<Lending>('/lending/', data);
+      lendings.value.push(lending);
+      return lending;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create lending';
+      throw err;
     }
   }
 
-  function recordRepayment(id: string, amount: number, note?: string) {
-    const lending = lendings.value.find(l => l.id === id);
-    if (!lending) return;
-
-    lending.totalRepaidAmount += amount;
-    lending.currentBalance = Math.max(0, lending.currentBalance - amount);
-    lending.updatedAt = new Date().toISOString();
-
-    if (lending.currentBalance <= 0) {
-      lending.currentBalance = 0;
-      lending.status = 'fully_repaid';
-    } else if (lending.status === 'overdue') {
-      lending.status = 'partially_repaid';
-    } else if (lending.totalRepaidAmount > 0 && lending.currentBalance < lending.principalAmount) {
-      lending.status = 'partially_repaid';
+  async function updateLending(id: string, data: Partial<Lending>): Promise<Lending | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<Lending>(`/lending/${id}/`, data);
+      const index = lendings.value.findIndex(l => l.id === id);
+      if (index !== -1) {
+        lendings.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update lending';
+      throw err;
     }
   }
 
-  function markAsDefaulted(id: string) {
-    const lending = lendings.value.find(l => l.id === id);
-    if (!lending) return;
-    lending.status = 'defaulted';
-    lending.updatedAt = new Date().toISOString();
+  async function deleteLending(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/lending/${id}/`);
+      const index = lendings.value.findIndex(l => l.id === id);
+      if (index !== -1) {
+        lendings.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete lending';
+      throw err;
+    }
   }
 
-  function markAsCancelled(id: string) {
-    const lending = lendings.value.find(l => l.id === id);
-    if (!lending) return;
-    lending.status = 'cancelled';
-    lending.updatedAt = new Date().toISOString();
+  // ==================== Payment Actions ====================
+
+  async function recordRepayment(id: string, amount: number, note?: string): Promise<Lending | null> {
+    error.value = null;
+    try {
+      await api.post<LendingPayment>(`/lending/${id}/payments/`, {
+        amount,
+        note,
+        lendingId: id,
+      });
+      // Re-fetch to get updated totals
+      return await fetchLendingById(id);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to record repayment';
+      throw err;
+    }
   }
+
+  async function deletePayment(lendingId: string, paymentId: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/lending/${lendingId}/payments/${paymentId}/`);
+      // Re-fetch to get updated totals
+      await fetchLendingById(lendingId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete payment';
+      throw err;
+    }
+  }
+
+  // ==================== Status Helpers ====================
+
+  async function markAsDefaulted(id: string): Promise<Lending | null> {
+    return updateLending(id, { status: 'defaulted' });
+  }
+
+  async function markAsCancelled(id: string): Promise<Lending | null> {
+    return updateLending(id, { status: 'cancelled' });
+  }
+
+  // ==================== Helpers ====================
 
   function getLendingById(id: string): Lending | undefined {
     return lendings.value.find(l => l.id === id);
   }
 
+  function clearError() {
+    error.value = null;
+  }
+
   return {
+    // State
     lendings,
+    loading,
+    error,
+    // Fetchers
+    fetchLendings,
+    fetchLendingById,
+    fetchLendingPayments,
+    // Computed
     activeLendings,
     overdueLendings,
     totalLentAmount,
@@ -120,12 +201,18 @@ export const useLendingStore = defineStore('lending', () => {
     totalInterestEarned,
     activeCount,
     overdueCount,
+    // CRUD
     addLending,
     updateLending,
     deleteLending,
+    // Payment
     recordRepayment,
+    deletePayment,
+    // Status helpers
     markAsDefaulted,
     markAsCancelled,
+    // Helpers
     getLendingById,
+    clearError,
   };
 });

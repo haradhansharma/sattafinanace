@@ -1,15 +1,13 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import type { Investment, InvestmentCategory, InvestmentTransaction, InvestmentStatus } from '../types';
-import { mockInvestments } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import { api, fetchAllPages, ApiError } from '../services/api-bridge';
 
 export const useInvestmentStore = defineStore('investment', () => {
-  const investments = ref<Investment[]>(mockInvestments.map(i => ({
-    ...i,
-    transactions: i.transactions.map(t => ({ ...t })),
-  })));
+  // ==================== State ====================
+  const investments = ref<Investment[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // ==================== Computed ====================
 
@@ -74,99 +72,137 @@ export const useInvestmentStore = defineStore('investment', () => {
     return map;
   });
 
-  // ==================== CRUD ====================
+  // ==================== Fetch Methods ====================
 
-  function addInvestment(data: Omit<Investment, 'id' | 'createdAt' | 'updatedAt' | 'transactions'>) {
-    const now = new Date().toISOString();
-    const inv: Investment = {
-      ...data,
-      transactions: [],
-      id: generateId('inv'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    investments.value.push(inv);
-    return inv;
-  }
-
-  function updateInvestment(id: string, data: Partial<Investment>) {
-    const index = investments.value.findIndex(i => i.id === id);
-    if (index === -1) return null;
-    investments.value[index] = {
-      ...investments.value[index],
-      ...data,
-      id: investments.value[index].id,
-      createdAt: investments.value[index].createdAt,
-      transactions: data.transactions ?? investments.value[index].transactions,
-      updatedAt: new Date().toISOString(),
-    };
-    return investments.value[index];
-  }
-
-  function deleteInvestment(id: string) {
-    const index = investments.value.findIndex(i => i.id === id);
-    if (index !== -1) investments.value.splice(index, 1);
-  }
-
-  function addTransaction(investmentId: string, tx: Omit<InvestmentTransaction, 'id' | 'createdAt' | 'updatedAt' | 'investmentId'>) {
-    const inv = investments.value.find(i => i.id === investmentId);
-    if (!inv) return;
-
-    const now = new Date().toISOString();
-    const newTx: InvestmentTransaction = {
-      ...tx,
-      investmentId,
-      id: generateId('itx'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    inv.transactions.push(newTx);
-
-    // Update investment based on transaction type
-    switch (tx.type) {
-      case 'buy':
-        inv.investedAmount += tx.amount;
-        inv.currentValue += tx.amount;
-        break;
-      case 'deposit':
-        inv.totalDepositedSoFar = (inv.totalDepositedSoFar || 0) + tx.amount;
-        inv.currentValue += tx.amount;
-        inv.depositCount = (inv.depositCount || 0) + 1;
-        break;
-      case 'sell':
-        inv.currentValue = Math.max(0, inv.currentValue - tx.amount);
-        break;
-      case 'withdrawal':
-        inv.currentValue = Math.max(0, inv.currentValue - tx.amount);
-        break;
-      case 'dividend':
-      case 'interest':
-      case 'bonus':
-        inv.totalReturns += tx.amount;
-        break;
-      case 'maturity':
-        inv.totalReturns += tx.amount;
-        inv.status = 'matured';
-        break;
+  async function fetchInvestments(params?: { category?: InvestmentCategory; status?: InvestmentStatus }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const items = await fetchAllPages<Investment>('/investment/', { params });
+      investments.value = items;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch investments';
+      throw err;
+    } finally {
+      loading.value = false;
     }
-
-    inv.updatedAt = now;
-    return inv;
   }
 
-  function updateStatus(id: string, status: InvestmentStatus) {
-    const inv = investments.value.find(i => i.id === id);
-    if (!inv) return;
-    inv.status = status;
-    inv.updatedAt = new Date().toISOString();
+  async function fetchInvestmentById(id: string): Promise<Investment> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const investment = await api.get<Investment>(`/investment/${id}/`);
+      const idx = investments.value.findIndex(i => i.id === investment.id);
+      if (idx !== -1) {
+        investments.value[idx] = investment;
+      } else {
+        investments.value.push(investment);
+      }
+      return investment;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch investment';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
   }
 
   function getInvestmentById(id: string): Investment | undefined {
     return investments.value.find(i => i.id === id);
   }
 
+  // ==================== CRUD ====================
+
+  async function addInvestment(data: any): Promise<Investment> {
+    error.value = null;
+    try {
+      const inv = await api.post<Investment>('/investment/', data);
+      investments.value.push(inv);
+      return inv;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create investment';
+      throw err;
+    }
+  }
+
+  async function updateInvestment(id: string, data: Partial<Investment>): Promise<Investment | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<Investment>(`/investment/${id}/`, data);
+      const index = investments.value.findIndex(i => i.id === id);
+      if (index !== -1) {
+        investments.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update investment';
+      throw err;
+    }
+  }
+
+  async function deleteInvestment(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/investment/${id}/`);
+      const index = investments.value.findIndex(i => i.id === id);
+      if (index !== -1) {
+        investments.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete investment';
+      throw err;
+    }
+  }
+
+  async function updateStatus(id: string, status: InvestmentStatus): Promise<Investment | null> {
+    return updateInvestment(id, { status });
+  }
+
+  // ==================== Transactions ====================
+
+  async function addTransaction(investmentId: string, txData: any): Promise<InvestmentTransaction> {
+    error.value = null;
+    try {
+      const tx = await api.post<InvestmentTransaction>(`/investment/${investmentId}/transactions/`, txData);
+      // Update local state: re-fetch the investment to get fresh computed fields
+      await fetchInvestmentById(investmentId);
+      return tx;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create transaction';
+      throw err;
+    }
+  }
+
+  async function deleteTransaction(investmentId: string, txId: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/investment/${investmentId}/transactions/${txId}/`);
+      // Re-fetch investment to get updated state
+      await fetchInvestmentById(investmentId);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete transaction';
+      throw err;
+    }
+  }
+
+  async function fetchTransactions(investmentId: string): Promise<InvestmentTransaction[]> {
+    loading.value = true;
+    error.value = null;
+    try {
+      return await fetchAllPages<InvestmentTransaction>(`/investment/${investmentId}/transactions/`);
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch transactions';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   return {
     investments,
+    loading,
+    error,
     activeInvestments,
     totalInvested,
     totalCurrentValue,
@@ -175,11 +211,15 @@ export const useInvestmentStore = defineStore('investment', () => {
     totalMonthlyIncome,
     investmentsByCategory,
     categoryTotals,
+    fetchInvestments,
+    fetchInvestmentById,
+    getInvestmentById,
     addInvestment,
     updateInvestment,
     deleteInvestment,
-    addTransaction,
     updateStatus,
-    getInvestmentById,
+    addTransaction,
+    deleteTransaction,
+    fetchTransactions,
   };
 });

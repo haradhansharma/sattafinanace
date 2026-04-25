@@ -1,17 +1,13 @@
-import '../lib/pinia-init';
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import type { SavingsGoal, SavingsGoalCategory, SavingsGoalStatus, SavingsGoalContribution, SavingsGoalMilestone } from '../types';
-import { mockSavingsGoals } from '../mock-data';
-import { generateId } from '../utils/formatters';
+import { api, fetchAllPages, ApiError } from '../services/api-bridge';
 
 export const useSavingsGoalStore = defineStore('savingsGoal', () => {
-  const goals = ref<SavingsGoal[]>(mockSavingsGoals.map(g => ({
-    ...g,
-    tags: g.tags || [],
-    contributions: g.contributions || [],
-    milestones: g.milestones || [],
-  })));
+  // ==================== State ====================
+  const goals = ref<SavingsGoal[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   // ==================== Computed ====================
 
@@ -52,7 +48,6 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
 
   const completedCount = computed(() => completedGoals.value.length);
 
-  // Goals by category
   const goalsByCategory = computed(() => {
     const map: Record<string, SavingsGoal[]> = {};
     goals.value.forEach(g => {
@@ -62,7 +57,6 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
     return map;
   });
 
-  // Total contributed this month
   const contributedThisMonth = computed(() => {
     const now = new Date();
     const year = now.getFullYear();
@@ -76,7 +70,6 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
       .reduce((sum, c) => sum + c.amount, 0);
   });
 
-  // Goals closest to completion
   const almostThereGoals = computed(() =>
     activeGoals.value
       .filter(g => {
@@ -86,13 +79,51 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
       .sort((a, b) => (b.currentAmount / b.targetAmount) - (a.currentAmount / a.targetAmount))
   );
 
-  // ==================== Motivational Helpers ====================
+  // ==================== Fetch Methods ====================
+
+  async function fetchGoals(params?: { category?: SavingsGoalCategory; status?: SavingsGoalStatus }): Promise<void> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const query: Record<string, string | undefined> = {};
+      if (params?.category) query.category = params.category;
+      if (params?.status) query.status = params.status;
+      goals.value = await fetchAllPages<SavingsGoal>('/savings-goal/', { params: query });
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch savings goals';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function fetchGoalById(id: string): Promise<SavingsGoal> {
+    loading.value = true;
+    error.value = null;
+    try {
+      const goal = await api.get<SavingsGoal>(`/savings-goal/${id}/`);
+      const idx = goals.value.findIndex(g => g.id === goal.id);
+      if (idx !== -1) {
+        goals.value[idx] = goal;
+      } else {
+        goals.value.push(goal);
+      }
+      return goal;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch savings goal';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // ==================== Helper Functions ====================
 
   function getMotivationalMessage(progress: number): { message: string; emoji: string } {
     if (progress >= 100) return { message: 'Congratulations! You did it!', emoji: '🎉' };
     if (progress >= 75) return { message: "You're almost there! Keep pushing!", emoji: '🔥' };
     if (progress >= 50) return { message: "Halfway there! You're doing amazing!", emoji: '💪' };
-    if (progress >= 25) return { message: "Great start! Keep the momentum going!", emoji: '🚀' };
+    if (progress >= 25) return { message: 'Great start! Keep the momentum going!', emoji: '🚀' };
     if (progress >= 10) return { message: "You've started! Every taka counts!", emoji: '✨' };
     return { message: 'The journey of a thousand miles begins with a single step!', emoji: '🌟' };
   }
@@ -120,7 +151,10 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
     if (!goal.targetDate || goal.monthlyContributionAmount <= 0) return true;
     const now = new Date();
     const target = new Date(goal.targetDate);
-    const monthsRemaining = Math.max(0, (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth()));
+    const monthsRemaining = Math.max(
+      0,
+      (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth()),
+    );
     if (monthsRemaining === 0) return goal.currentAmount >= goal.targetAmount;
     const remaining = goal.targetAmount - goal.currentAmount;
     const requiredMonthly = remaining / monthsRemaining;
@@ -152,11 +186,12 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
   function searchGoals(query: string): SavingsGoal[] {
     const q = query.toLowerCase().trim();
     if (!q) return goals.value;
-    return goals.value.filter(g =>
-      g.name.toLowerCase().includes(q) ||
-      g.description?.toLowerCase().includes(q) ||
-      g.tags?.some(t => t.toLowerCase().includes(q)) ||
-      g.notes?.toLowerCase().includes(q)
+    return goals.value.filter(
+      g =>
+        g.name.toLowerCase().includes(q) ||
+        g.description?.toLowerCase().includes(q) ||
+        g.tags?.some(t => t.toLowerCase().includes(q)) ||
+        g.notes?.toLowerCase().includes(q),
     );
   }
 
@@ -166,161 +201,117 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
 
   // ==================== Milestone Helpers ====================
 
-  function checkAndUpdateMilestones(goal: SavingsGoal): SavingsGoalMilestone[] {
-    const progress = getGoalProgress(goal);
-    return goal.milestones.map(m => {
-      if (!m.achieved && progress >= m.percent) {
-        return { ...m, achieved: true, achievedDate: new Date().toISOString() };
-      }
-      return m;
-    });
-  }
-
   function getLatestMilestone(goal: SavingsGoal): SavingsGoalMilestone | null {
     const achieved = goal.milestones.filter(m => m.achieved);
     if (achieved.length === 0) return null;
-    return achieved.reduce((latest, m) => m.percent > latest.percent ? m : latest);
+    return achieved.reduce((latest, m) => (m.percent > latest.percent ? m : latest));
   }
 
   // ==================== CRUD ====================
 
-  function addGoal(data: Omit<SavingsGoal, 'id' | 'createdAt' | 'updatedAt'>): SavingsGoal {
-    const now = new Date().toISOString();
-    const goal: SavingsGoal = {
-      ...data,
-      tags: data.tags || [],
-      contributions: data.contributions || [],
-      milestones: data.milestones || [
-        { id: 'ms_25', percent: 25, label: 'Getting Started!', achieved: false },
-        { id: 'ms_50', percent: 50, label: 'Halfway There!', achieved: false },
-        { id: 'ms_75', percent: 75, label: 'Almost There!', achieved: false },
-        { id: 'ms_100', percent: 100, label: 'Goal Complete!', achieved: false },
-      ],
-      totalContributed: data.totalContributed || data.currentAmount,
-      totalWithdrawn: data.totalWithdrawn || 0,
-      contributionCount: data.contributionCount || 0,
-      currentStreak: data.currentStreak || 0,
-      longestStreak: data.longestStreak || 0,
-      id: generateId('sg'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    goals.value.push(goal);
-    return goal;
+  async function addGoal(data: any): Promise<SavingsGoal> {
+    error.value = null;
+    try {
+      const goal = await api.post<SavingsGoal>('/savings-goal/', data);
+      goals.value.push(goal);
+      return goal;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to create savings goal';
+      throw err;
+    }
   }
 
-  function updateGoal(id: string, data: Partial<SavingsGoal>): SavingsGoal | null {
-    const index = goals.value.findIndex(g => g.id === id);
-    if (index === -1) return null;
-    goals.value[index] = {
-      ...goals.value[index],
-      ...data,
-      id: goals.value[index].id,
-      createdAt: goals.value[index].createdAt,
-      tags: data.tags ?? goals.value[index].tags,
-      contributions: data.contributions ?? goals.value[index].contributions,
-      milestones: data.milestones ?? goals.value[index].milestones,
-      updatedAt: new Date().toISOString(),
-    };
-    return goals.value[index];
+  async function updateGoal(id: string, data: Partial<SavingsGoal>): Promise<SavingsGoal | null> {
+    error.value = null;
+    try {
+      const updated = await api.put<SavingsGoal>(`/savings-goal/${id}/`, data);
+      const index = goals.value.findIndex(g => g.id === id);
+      if (index !== -1) {
+        goals.value[index] = updated;
+      }
+      return updated;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to update savings goal';
+      throw err;
+    }
   }
 
-  function deleteGoal(id: string) {
-    const index = goals.value.findIndex(g => g.id === id);
-    if (index !== -1) goals.value.splice(index, 1);
+  async function deleteGoal(id: string): Promise<void> {
+    error.value = null;
+    try {
+      await api.delete(`/savings-goal/${id}/`);
+      const index = goals.value.findIndex(g => g.id === id);
+      if (index !== -1) {
+        goals.value.splice(index, 1);
+      }
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to delete savings goal';
+      throw err;
+    }
   }
 
   // ==================== Contribution Actions ====================
 
-  function addContribution(goalId: string, amount: number, note?: string, bankAccountId?: string) {
-    const goal = goals.value.find(g => g.id === goalId);
-    if (!goal || amount <= 0) return;
-
-    const contribution: SavingsGoalContribution = {
-      id: generateId('sgc'),
-      amount,
-      date: new Date().toISOString(),
-      note,
-      bankAccountId,
-    };
-
-    goal.contributions.push(contribution);
-    goal.totalContributed += amount;
-    goal.contributionCount += 1;
-    goal.currentAmount += amount;
-    goal.updatedAt = new Date().toISOString();
-
-    // Update streak
-    const lastMonth = new Date();
-    lastMonth.setMonth(lastMonth.getMonth() - 1);
-    const hasLastMonth = goal.contributions.some(c => {
-      const d = new Date(c.date);
-      return d.getFullYear() === lastMonth.getFullYear() && d.getMonth() === lastMonth.getMonth();
-    });
-    goal.currentStreak = hasLastMonth ? goal.currentStreak + 1 : 1;
-    goal.longestStreak = Math.max(goal.longestStreak, goal.currentStreak);
-
-    // Check milestones
-    goal.milestones = checkAndUpdateMilestones(goal);
-
-    // Auto-complete if target reached
-    if (goal.currentAmount >= goal.targetAmount) {
-      goal.currentAmount = goal.targetAmount;
-      goal.status = 'completed';
-      goal.completedDate = new Date().toISOString();
+  async function addContribution(
+    goalId: string,
+    data: { amount: number; note?: string; bankAccountId?: string },
+  ): Promise<SavingsGoalContribution> {
+    error.value = null;
+    try {
+      const contribution = await api.post<SavingsGoalContribution>(
+        `/savings-goal/${goalId}/contributions/`,
+        data,
+      );
+      // Re-fetch goal so computed fields (totals, milestones, streak) are in sync
+      await fetchGoalById(goalId);
+      return contribution;
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to add contribution';
+      throw err;
     }
   }
 
-  function withdrawFromGoal(goalId: string, amount: number, note?: string) {
-    const goal = goals.value.find(g => g.id === goalId);
-    if (!goal || amount <= 0 || amount > goal.currentAmount) return;
-
-    goal.currentAmount -= amount;
-    goal.totalWithdrawn += amount;
-    goal.updatedAt = new Date().toISOString();
-
-    // Reset milestones if went below threshold
-    goal.milestones = checkAndUpdateMilestones(goal);
-
-    // If was completed, go back to active
-    if (goal.status === 'completed') {
-      goal.status = 'active';
-      goal.completedDate = undefined;
+  async function fetchContributions(goalId: string): Promise<SavingsGoalContribution[]> {
+    loading.value = true;
+    error.value = null;
+    try {
+      return await fetchAllPages<SavingsGoalContribution>(
+        `/savings-goal/${goalId}/contributions/`,
+      );
+    } catch (err) {
+      error.value = err instanceof ApiError ? err.message : 'Failed to fetch contributions';
+      throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
-  function pauseGoal(id: string) {
-    const goal = goals.value.find(g => g.id === id);
-    if (!goal) return;
-    goal.status = 'paused';
-    goal.autoContributeEnabled = false;
-    goal.updatedAt = new Date().toISOString();
+  // ==================== Status Helpers (delegate to updateGoal) ====================
+
+  async function pauseGoal(id: string): Promise<SavingsGoal | null> {
+    return updateGoal(id, { status: 'paused', autoContributeEnabled: false });
   }
 
-  function resumeGoal(id: string) {
-    const goal = goals.value.find(g => g.id === id);
-    if (!goal) return;
-    goal.status = 'active';
-    goal.updatedAt = new Date().toISOString();
+  async function resumeGoal(id: string): Promise<SavingsGoal | null> {
+    return updateGoal(id, { status: 'active' });
   }
 
-  function abandonGoal(id: string) {
-    const goal = goals.value.find(g => g.id === id);
-    if (!goal) return;
-    goal.status = 'abandoned';
-    goal.autoContributeEnabled = false;
-    goal.updatedAt = new Date().toISOString();
+  async function abandonGoal(id: string): Promise<SavingsGoal | null> {
+    return updateGoal(id, { status: 'abandoned', autoContributeEnabled: false });
   }
 
-  function toggleAutoContribute(id: string) {
+  async function toggleAutoContribute(id: string): Promise<SavingsGoal | null> {
     const goal = goals.value.find(g => g.id === id);
-    if (!goal) return;
-    goal.autoContributeEnabled = !goal.autoContributeEnabled;
-    goal.updatedAt = new Date().toISOString();
+    if (!goal) return null;
+    return updateGoal(id, { autoContributeEnabled: !goal.autoContributeEnabled });
   }
 
   return {
+    // State
     goals,
+    loading,
+    error,
+    // Computed
     totalGoals,
     activeGoals,
     completedGoals,
@@ -333,6 +324,10 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
     goalsByCategory,
     contributedThisMonth,
     almostThereGoals,
+    // Fetch
+    fetchGoals,
+    fetchGoalById,
+    // Helpers
     getMotivationalMessage,
     getGoalProgress,
     getRemainingAmount,
@@ -340,15 +335,19 @@ export const useSavingsGoalStore = defineStore('savingsGoal', () => {
     isOnTrack,
     getTrackStatus,
     getDaysRemaining,
+    // Query
     getGoalsByCategory,
     searchGoals,
     getGoalById,
     getLatestMilestone,
+    // CRUD
     addGoal,
     updateGoal,
     deleteGoal,
+    // Contributions
     addContribution,
-    withdrawFromGoal,
+    fetchContributions,
+    // Status
     pauseGoal,
     resumeGoal,
     abandonGoal,

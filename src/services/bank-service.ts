@@ -1,6 +1,6 @@
 import type { BankAccount, Transaction } from '../types';
-import { mockBankAccounts } from '../pages/mock-data/bank-accounts';
-import { mockTransactions } from '../pages/mock-data/transactions';
+import { mockBankAccounts } from '../mock-data/bank-accounts';
+import { mockTransactions } from '../mock-data/transactions';
 // import { apiBridge } from './api-bridge'; // Uncomment when backend ready
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));

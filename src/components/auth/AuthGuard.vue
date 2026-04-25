@@ -19,7 +19,9 @@ onMounted(async () => {
     const { useAuthStore } = await import('../../stores/auth');
     const authStore = useAuthStore();
 
-    if (!authStore.restoreSession()) {
+    // restoreSession now validates token with backend (GET /auth/me)
+    const valid = await authStore.restoreSession();
+    if (!valid) {
       redirectToLogin();
     } else {
       isChecking.value = false;
